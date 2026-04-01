@@ -1,0 +1,5 @@
+{
+  "name": "AI Workflow Builder",
+  "description": "An LLM-powered workflow builder where you can edit complex logic through natural language and interactive text.",
+  "requestFramePermissions": []
+}
