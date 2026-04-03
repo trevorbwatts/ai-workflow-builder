@@ -10,12 +10,14 @@ interface WorkflowSentenceProps {
   workflow: Workflow;
   onUpdateNode?: (id: string, newValue: any) => void;
   readOnly?: boolean;
+  hasMultipleVariants?: boolean;
 }
 
 export const WorkflowSentence: React.FC<WorkflowSentenceProps> = ({
   workflow,
   onUpdateNode,
   readOnly = false,
+  hasMultipleVariants = false,
 }) => {
   const [editing, setEditing] = useState<EditingState>(null);
 
@@ -69,6 +71,7 @@ export const WorkflowSentence: React.FC<WorkflowSentenceProps> = ({
                   node={node}
                   anchorRect={editing.rect}
                   onClose={() => setEditing(null)}
+                  hasMultipleVariants={hasMultipleVariants}
                   onSave={(newValue) => {
                     onUpdateNode?.(nodeId, newValue);
                     setEditing(null);

@@ -1,4 +1,4 @@
-import { NodeType, NodeValue, ApproversValue, ScopeValue, TimeoutValue, AdvanceNoticeValue } from '../types';
+import { NodeType, NodeValue, ApproversValue, ScopeValue, TimeoutValue, AdvanceNoticeValue, TimeOffTypeValue } from '../types';
 
 export const APPROVAL_ROLES = [
   'CEO', 'CFO', 'COO',
@@ -18,15 +18,16 @@ export const SCOPE_OPTIONS: Record<string, string[]> = {
 };
 
 export function formatOperand(op: string): string {
-  if (op === 'manager') return 'Manager';
-  if (op === 'managers manager') return "Manager's Manager";
-  if (op.startsWith('role:')) return op.slice(5);
+  if (op === 'manager') return 'their Manager';
+  if (op === 'managers manager') return "their Manager's Manager";
+  if (op.startsWith('role:')) return `the ${op.slice(5)}`;
   if (op.startsWith('person:')) return op.slice(7);
   return op;
 }
 
 export function displayScopeValue(v: ScopeValue): string {
   if (v.attribute === 'all') return 'all employees';
+  if (v.attribute === 'all_other') return 'all other employees';
   if (!v.value) return '...';
   switch (v.attribute) {
     case 'location_country':
@@ -45,9 +46,24 @@ export function displayScopeValue(v: ScopeValue): string {
   }
 }
 
+export function displayTimeOffTypeValue(v: TimeOffTypeValue): string {
+  switch (v.attribute) {
+    case 'all': return 'all time-off requests';
+    case 'all_other': return 'all other time-off requests';
+    case 'pto': return 'PTO requests';
+    case 'sick_leave': return 'Sick Leave requests';
+    case 'bereavement': return 'Bereavement requests';
+    case 'parental_leave': return 'Parental Leave requests';
+    default: return v.attribute;
+  }
+}
+
 export function displayNodeValue(type: NodeType, value: NodeValue): string {
   if (type === 'scope') {
     return displayScopeValue(value as ScopeValue);
+  }
+  if (type === 'time_off_type') {
+    return displayTimeOffTypeValue(value as TimeOffTypeValue);
   }
   if (type === 'approvers') {
     const v = value as ApproversValue;

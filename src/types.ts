@@ -16,6 +16,7 @@ export interface AdvanceNoticeValue {
 
 export type ScopeAttribute =
   | 'all'
+  | 'all_other'
   | 'location_country'
   | 'location_state'
   | 'department'
@@ -28,8 +29,14 @@ export interface ScopeValue {
   value: string; // empty string when attribute is 'all'
 }
 
-export type NodeType = 'approvers' | 'timeout' | 'advance_notice' | 'scope';
-export type NodeValue = ApproversValue | TimeoutValue | AdvanceNoticeValue | ScopeValue;
+export type TimeOffTypeAttribute = 'all' | 'all_other' | 'pto' | 'sick_leave' | 'bereavement' | 'parental_leave';
+
+export interface TimeOffTypeValue {
+  attribute: TimeOffTypeAttribute;
+}
+
+export type NodeType = 'approvers' | 'timeout' | 'advance_notice' | 'scope' | 'time_off_type';
+export type NodeValue = ApproversValue | TimeoutValue | AdvanceNoticeValue | ScopeValue | TimeOffTypeValue;
 
 export interface WorkflowNode {
   id: string;

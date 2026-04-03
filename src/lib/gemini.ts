@@ -1,6 +1,6 @@
 import { Workflow } from "../types";
-import { NODE_LIBRARY_DESCRIPTION, displayScopeValue } from "./nodes";
-import { ScopeValue } from "../types";
+import { NODE_LIBRARY_DESCRIPTION, displayScopeValue, displayTimeOffTypeValue } from "./nodes";
+import { ScopeValue, TimeOffTypeValue } from "../types";
 
 export async function processWorkflowEdit(
   currentWorkflow: Workflow,
@@ -65,13 +65,17 @@ Rules:
 }
 
 export async function suggestScopeAdjustments(
-  variants: Array<{ id: string; scope: ScopeValue }>,
+  variants: Array<{ id: string; scope: ScopeValue; timeOffType?: TimeOffTypeValue }>,
   workflowName: string
 ): Promise<Array<{ variantId: string; suggestedAttribute: string; suggestedValue: string; suggestedDisplay: string }>> {
   if (variants.length < 2) return [];
 
   const scopeSummary = variants
-    .map((v) => `- id: "${v.id}", scope: "${displayScopeValue(v.scope)}"`)
+    .map((v) => {
+      const parts = [`scope: "${displayScopeValue(v.scope)}"`];
+      if (v.timeOffType) parts.push(`time-off type: "${displayTimeOffTypeValue(v.timeOffType)}"`);
+      return `- id: "${v.id}", ${parts.join(', ')}`;
+    })
     .join('\n');
 
   const prompt = `
@@ -80,7 +84,7 @@ You are reviewing ${workflowName} workflow variants for scope conflicts.
 Current variants:
 ${scopeSummary}
 
-Identify any conflicts (e.g. "all employees" overlapping with specific groups) and suggest scope adjustments so each variant is mutually exclusive. Only suggest changes where necessary. For a catch-all that overlaps with specific scopes, suggest changing it to "all other employees" by returning attribute: "all_other" and value: "".
+Identify any true conflicts where two variants would apply to the same employees AND the same request type. Variants that share the same employee scope but have different time-off types are NOT conflicting — the time-off type differentiates them. Only suggest scope changes where variants are genuinely overlapping. For a catch-all employee scope that truly overlaps with specific scopes, suggest changing it to "all other employees" by returning attribute: "all_other" and value: "".
 
 Respond ONLY with a valid JSON array of suggestions (only include variants that need changes):
 [{"variantId": "...", "suggestedAttribute": "...", "suggestedValue": "...", "suggestedDisplay": "..."}]

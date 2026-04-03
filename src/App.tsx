@@ -1,10 +1,11 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { WorkflowGroup, Workflow, WorkflowNode } from './types';
 import { WorkflowCard } from './components/WorkflowCard';
+import { NewWorkflowInput } from './components/NewWorkflowInput';
 import { motion, AnimatePresence } from 'motion/react';
 import { Home, User, Users, IdCard, PieChart, FileText, CircleDollarSign, Banknote, Zap, Menu, Plus } from 'lucide-react';
 import { suggestScopeAdjustments } from './lib/gemini';
-import { ScopeValue } from './types';
+import { ScopeValue, TimeOffTypeValue } from './types';
 import { displayScopeValue } from './lib/nodes';
 
 const NAV_ITEMS = [
@@ -44,9 +45,10 @@ const WORKFLOW_GROUPS: WorkflowGroup[] = [
     variants: [{
       id: 'time-off-default',
       name: 'Time Off Requests',
-      template: 'For {scope}, time off requests are sent to {approvers} for approval. If not approved within {timeout}, they are forwarded to {escalation}.',
+      template: 'For {scope}, {time_off_type} are sent to {approvers} for approval. If not approved within {timeout}, they are forwarded to {escalation}.',
       nodes: {
         scope: scopeNode(),
+        time_off_type: { id: 'time_off_type', type: 'time_off_type', label: 'Time-Off Type', value: { attribute: 'all' } },
         approvers: { id: 'approvers', type: 'approvers', label: 'Approvers', value: { operator: 'AND', operands: ['manager'] } },
         timeout: { id: 'timeout', type: 'timeout', label: 'Timeout', value: { amount: 3, unit: 'days' } },
         escalation: { id: 'escalation', type: 'approvers', label: 'Escalation', value: { operator: 'AND', operands: ['managers manager'] } },
@@ -137,9 +139,35 @@ export default function App() {
   const [groups, setGroups] = useState<WorkflowGroup[]>(WORKFLOW_GROUPS);
   const [selectedGroupId, setSelectedGroupId] = useState(WORKFLOW_GROUPS[0].id);
   const [scopeSuggestions, setScopeSuggestions] = useState<ScopeSuggestion[]>([]);
-  const [newVariantId, setNewVariantId] = useState<string | null>(null);
+  const [isCreatingNew, setIsCreatingNew] = useState(false);
+  const [newestVariantId, setNewestVariantId] = useState<string | null>(null);
+  const [dismissedUncovered, setDismissedUncovered] = useState(false);
+  const [dismissedTimeOffUncovered, setDismissedTimeOffUncovered] = useState(false);
+  const [duplicateDraftIds, setDuplicateDraftIds] = useState<Set<string>>(new Set());
 
   const selectedGroup = groups.find((g) => g.id === selectedGroupId)!;
+
+  const showUncoveredBanner = useMemo(() => {
+    if (dismissedUncovered) return false;
+    const variants = selectedGroup.variants;
+    if (variants.length === 0) return false;
+    return !variants.some((v) => {
+      const attr = (v.nodes.scope?.value as ScopeValue)?.attribute;
+      return attr === 'all' || attr === 'all_other';
+    });
+  }, [selectedGroup.variants, dismissedUncovered]);
+
+  const showTimeOffCoverageBanner = useMemo(() => {
+    if (dismissedTimeOffUncovered) return false;
+    const variants = selectedGroup.variants;
+    if (variants.length === 0) return false;
+    const hasTimeOffTypeNode = variants.some((v) => v.nodes.time_off_type);
+    if (!hasTimeOffTypeNode) return false;
+    return !variants.some((v) => {
+      const attr = (v.nodes.time_off_type?.value as TimeOffTypeValue)?.attribute;
+      return attr === 'all' || attr === 'all_other';
+    });
+  }, [selectedGroup.variants, dismissedTimeOffUncovered]);
 
   const updateVariants = useCallback(
     (updater: (variants: Workflow[]) => Workflow[]) => {
@@ -152,7 +180,8 @@ export default function App() {
 
   const handleApply = useCallback(
     async (updatedWorkflow: Workflow) => {
-      setNewVariantId((prev) => (prev === updatedWorkflow.id ? null : prev));
+      setNewestVariantId((prev) => (prev === updatedWorkflow.id ? null : prev));
+      setDuplicateDraftIds((prev) => { const next = new Set(prev); next.delete(updatedWorkflow.id); return next; });
       updateVariants((variants) =>
         variants.map((v) => (v.id === updatedWorkflow.id ? updatedWorkflow : v))
       );
@@ -165,6 +194,7 @@ export default function App() {
           const scopeData = updated.map((v) => ({
             id: v.id,
             scope: v.nodes.scope?.value as ScopeValue ?? { attribute: 'all' as const, value: '' },
+            timeOffType: v.nodes.time_off_type?.value as TimeOffTypeValue | undefined,
           }));
           suggestScopeAdjustments(scopeData, group.name).then(setScopeSuggestions).catch(() => {});
         }
@@ -174,25 +204,67 @@ export default function App() {
     [updateVariants, selectedGroupId]
   );
 
-  const handleAddVariant = useCallback(() => {
-    const variants = selectedGroup.variants;
-    const base = variants[variants.length - 1];
+  const handleNewWorkflowCreated = useCallback((workflow: Workflow) => {
     const id = `${selectedGroupId}-${Date.now()}`;
-    const newVariant: Workflow = {
-      ...JSON.parse(JSON.stringify(base)),
-      id,
-    };
-    setNewVariantId(id);
+    const newVariant: Workflow = { ...workflow, id };
+    setNewestVariantId(id);
+    setIsCreatingNew(false);
     updateVariants((v) => [...v, newVariant]);
-  }, [selectedGroup, selectedGroupId, updateVariants]);
+  }, [selectedGroupId, updateVariants]);
 
   const handleDeleteVariant = useCallback(
     (variantId: string) => {
       updateVariants((v) => v.filter((w) => w.id !== variantId));
       setScopeSuggestions((s) => s.filter((x) => x.variantId !== variantId));
+      setDuplicateDraftIds((prev) => { const next = new Set(prev); next.delete(variantId); return next; });
     },
     [updateVariants]
   );
+
+  const handleDuplicateVariant = useCallback((variantId: string) => {
+    const source = selectedGroup.variants.find((v) => v.id === variantId)!;
+    const id = `${selectedGroupId}-${Date.now()}`;
+    const duplicate: Workflow = { ...source, id };
+    setDuplicateDraftIds((prev) => new Set([...prev, id]));
+    setNewestVariantId(id);
+    updateVariants((v) => [...v, duplicate]);
+  }, [selectedGroup.variants, selectedGroupId, updateVariants]);
+
+  const handleAddCatchAll = useCallback(() => {
+    const base = selectedGroup.variants[0];
+    const id = `${selectedGroupId}-${Date.now()}`;
+    const catchAllVariant: Workflow = {
+      ...base,
+      id,
+      nodes: {
+        ...base.nodes,
+        scope: {
+          ...base.nodes.scope,
+          value: { attribute: 'all_other', value: '' } as ScopeValue,
+        },
+      },
+    };
+    setNewestVariantId(id);
+    updateVariants((v) => [...v, catchAllVariant]);
+  }, [selectedGroup.variants, selectedGroupId, updateVariants]);
+
+  const handleAddTimeOffCatchAll = useCallback(() => {
+    const base = selectedGroup.variants[0];
+    const id = `${selectedGroupId}-${Date.now()}`;
+    const catchAllVariant: Workflow = {
+      ...base,
+      id,
+      nodes: {
+        ...base.nodes,
+        time_off_type: {
+          ...base.nodes.time_off_type,
+          value: { attribute: 'all_other' } as TimeOffTypeValue,
+        },
+      },
+    };
+    setNewestVariantId(id);
+    updateVariants((v) => [...v, catchAllVariant]);
+  }, [selectedGroup.variants, selectedGroupId, updateVariants]);
 
   const handleAcceptSuggestion = useCallback(
     (suggestion: ScopeSuggestion) => {
@@ -261,7 +333,7 @@ export default function App() {
               {groups.map((g) => (
                 <button
                   key={g.id}
-                  onClick={() => { setSelectedGroupId(g.id); setScopeSuggestions([]); }}
+                  onClick={() => { setSelectedGroupId(g.id); setScopeSuggestions([]); setDismissedUncovered(false); setDismissedTimeOffUncovered(false); }}
                   className={`w-full text-left px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
                     g.id === selectedGroupId ? 'bg-indigo-50 text-indigo-700' : 'text-slate-500 hover:bg-slate-50'
                   }`}
@@ -281,6 +353,68 @@ export default function App() {
               className="w-full max-w-4xl space-y-4"
             >
               <h2 className="text-2xl font-bold text-slate-900 mb-4">{selectedGroup.name}</h2>
+
+              {/* Coverage gap banner */}
+              <AnimatePresence>
+                {showUncoveredBanner && (
+                  <motion.div
+                    key="uncovered-banner"
+                    initial={{ opacity: 0, y: -8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -8 }}
+                    className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 flex items-center justify-between gap-4 text-sm"
+                  >
+                    <span className="text-red-800">
+                      <span className="font-semibold">Coverage gap:</span> Some employees aren't covered by any workflow variant. Add a catch-all to ensure everyone is included.
+                    </span>
+                    <div className="flex gap-2 shrink-0">
+                      <button
+                        onClick={handleAddCatchAll}
+                        className="px-3 py-1 bg-red-600 text-white rounded-lg text-xs font-semibold hover:bg-red-700 transition-colors"
+                      >
+                        Add catch-all
+                      </button>
+                      <button
+                        onClick={() => setDismissedUncovered(true)}
+                        className="px-3 py-1 text-red-700 border border-red-300 rounded-lg text-xs font-semibold hover:bg-red-100 transition-colors"
+                      >
+                        Dismiss
+                      </button>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {/* Time-off type coverage gap banner */}
+              <AnimatePresence>
+                {showTimeOffCoverageBanner && (
+                  <motion.div
+                    key="time-off-uncovered-banner"
+                    initial={{ opacity: 0, y: -8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -8 }}
+                    className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 flex items-center justify-between gap-4 text-sm"
+                  >
+                    <span className="text-red-800">
+                      <span className="font-semibold">Coverage gap:</span> Some time-off types aren't covered by any workflow variant. Add a catch-all to ensure all request types are included.
+                    </span>
+                    <div className="flex gap-2 shrink-0">
+                      <button
+                        onClick={handleAddTimeOffCatchAll}
+                        className="px-3 py-1 bg-red-600 text-white rounded-lg text-xs font-semibold hover:bg-red-700 transition-colors"
+                      >
+                        Add catch-all
+                      </button>
+                      <button
+                        onClick={() => setDismissedTimeOffUncovered(true)}
+                        className="px-3 py-1 text-red-700 border border-red-300 rounded-lg text-xs font-semibold hover:bg-red-100 transition-colors"
+                      >
+                        Dismiss
+                      </button>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
 
               {/* Scope conflict suggestions */}
               <AnimatePresence>
@@ -319,24 +453,65 @@ export default function App() {
                 })}
               </AnimatePresence>
 
-              {selectedGroup.variants.map((variant) => (
-                <WorkflowCard
-                  key={variant.id}
-                  liveWorkflow={variant}
-                  onUpdateLiveNode={() => {}}
-                  onApply={handleApply}
-                  onDelete={selectedGroup.variants.length > 1 ? () => handleDeleteVariant(variant.id) : undefined}
-                  initiallyEditing={variant.id === newVariantId}
-                  isNew={variant.id === newVariantId}
-                />
-              ))}
+              <AnimatePresence>
+                {[...selectedGroup.variants].sort((a, b) => {
+                  const aIsOther =
+                    (a.nodes.scope?.value as ScopeValue)?.attribute === 'all_other' ||
+                    (a.nodes.time_off_type?.value as TimeOffTypeValue)?.attribute === 'all_other';
+                  const bIsOther =
+                    (b.nodes.scope?.value as ScopeValue)?.attribute === 'all_other' ||
+                    (b.nodes.time_off_type?.value as TimeOffTypeValue)?.attribute === 'all_other';
+                  return aIsOther === bIsOther ? 0 : aIsOther ? 1 : -1;
+                }).map((variant) => (
+                  <motion.div
+                    key={variant.id}
+                    layout
+                    initial={variant.id === newestVariantId ? { opacity: 0, y: -16 } : false}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ type: 'spring', damping: 28, stiffness: 220 }}
+                  >
+                    <WorkflowCard
+                      liveWorkflow={variant}
+                      onUpdateLiveNode={() => {}}
+                      onApply={handleApply}
+                      onDelete={selectedGroup.variants.length > 1 ? () => handleDeleteVariant(variant.id) : undefined}
+                      onDuplicate={() => handleDuplicateVariant(variant.id)}
+                      initiallyEditing={variant.id === newestVariantId}
+                      isDraft={variant.id === newestVariantId}
+                      isDuplicateDraft={duplicateDraftIds.has(variant.id)}
+                      hasConflict={scopeSuggestions.some((s) => s.variantId === variant.id)}
+                      hasMultipleVariants={selectedGroup.variants.length > 1}
+                    />
+                  </motion.div>
+                ))}
+              </AnimatePresence>
 
-              <button
-                onClick={handleAddVariant}
-                className="flex items-center gap-2 px-4 py-2.5 border border-dashed border-slate-300 rounded-xl text-sm font-medium text-slate-400 hover:text-indigo-500 hover:border-indigo-300 transition-all w-full max-w-3xl justify-center"
-              >
-                <Plus size={14} /> Add Workflow
-              </button>
+              <AnimatePresence>
+                {isCreatingNew && (
+                  <motion.div
+                    key="new-workflow-input"
+                    initial={{ opacity: 0, y: -16 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -16 }}
+                    transition={{ type: 'spring', damping: 28, stiffness: 220 }}
+                  >
+                    <NewWorkflowInput
+                      baseWorkflow={selectedGroup.variants[selectedGroup.variants.length - 1]}
+                      onCreated={handleNewWorkflowCreated}
+                      onCancel={() => setIsCreatingNew(false)}
+                    />
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {!isCreatingNew && (
+                <button
+                  onClick={() => setIsCreatingNew(true)}
+                  className="flex items-center gap-2 px-4 py-2.5 border border-dashed border-slate-300 rounded-xl text-sm font-medium text-slate-400 hover:text-indigo-500 hover:border-indigo-300 transition-all w-full max-w-3xl justify-center"
+                >
+                  <Plus size={14} /> Add Workflow
+                </button>
+              )}
             </motion.div>
           </div>
         </main>
