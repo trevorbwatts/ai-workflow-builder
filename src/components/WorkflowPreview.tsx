@@ -1,8 +1,6 @@
 import React, { useState } from 'react';
-import ReactDOM from 'react-dom';
 import { Workflow, TimeoutValue, ScopeValue, TimeOffTypeValue, StatusConditionValue, ApproversValue } from '../types';
 import { displayNodeValue, displayScopeValue, displayTimeOffTypeValue, displayStatusConditionValue, formatOperand } from '../lib/nodes';
-import { motion } from 'motion/react';
 import { User, Bell, Clock, CheckCircle2, Mail, Inbox, X, ArrowRight, ArrowDown, UserX } from 'lucide-react';
 
 // ─── Step Types ───────────────────────────────────────────────────────────────
@@ -417,7 +415,7 @@ const GlanceView: React.FC<{ steps: TimelineStep[] }> = ({ steps }) => {
   );
 };
 
-// ─── Modal ────────────────────────────────────────────────────────────────────
+// ─── Sidebar Panel ────────────────────────────────────────────────────────────
 
 const TABS = ['Timeline', 'Cards', 'Steps', 'At a Glance'] as const;
 type Tab = typeof TABS[number];
@@ -438,53 +436,44 @@ export const WorkflowPreview: React.FC<WorkflowPreviewProps> = ({ workflow, grou
   const timeOffLabel = timeOffNode ? displayTimeOffTypeValue(timeOffNode.value as TimeOffTypeValue) : null;
   const contextLine = [scopeLabel, timeOffLabel].filter(Boolean).join(' · ');
 
-  const panel = (
-    <div className="fixed inset-0 bg-black/40 z-[9000] flex items-center justify-center p-4" onClick={onClose}>
-      <motion.div
-        initial={{ opacity: 0, y: 12, scale: 0.96 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        transition={{ duration: 0.15 }}
-        className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[80vh] flex flex-col"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="flex items-start justify-between px-6 pt-5 pb-4 border-b border-slate-100 shrink-0">
-          <div>
-            <h2 className="text-sm font-bold text-slate-900">{groupName} — Preview</h2>
-            {contextLine && <p className="text-xs text-slate-400 mt-0.5 capitalize">{contextLine}</p>}
-          </div>
-          <button onClick={onClose} className="p-1 hover:bg-slate-100 rounded-full transition-colors text-slate-400 shrink-0 ml-4">
-            <X size={14} />
+  return (
+    <div className="flex flex-col h-full">
+      {/* Header */}
+      <div className="flex items-start justify-between px-5 pt-5 pb-0 shrink-0">
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-0.5">Preview</p>
+          <h2 className="text-sm font-bold text-slate-900">{groupName}</h2>
+          {contextLine && <p className="text-xs text-slate-400 mt-0.5 capitalize">{contextLine}</p>}
+        </div>
+        <button onClick={onClose} className="p-1 hover:bg-slate-100 rounded-full transition-colors text-slate-400 shrink-0 mt-1">
+          <X size={14} />
+        </button>
+      </div>
+
+      {/* Tabs */}
+      <div className="flex border-b border-slate-100 px-5 mt-4 shrink-0">
+        {TABS.map((tab) => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            className={`px-2.5 py-2.5 text-xs font-semibold border-b-2 transition-colors -mb-px whitespace-nowrap ${
+              activeTab === tab
+                ? 'border-indigo-500 text-indigo-600'
+                : 'border-transparent text-slate-400 hover:text-slate-600'
+            }`}
+          >
+            {tab}
           </button>
-        </div>
+        ))}
+      </div>
 
-        {/* Tabs */}
-        <div className="flex border-b border-slate-100 px-6 shrink-0">
-          {TABS.map((tab) => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={`px-3 py-2.5 text-xs font-semibold border-b-2 transition-colors -mb-px whitespace-nowrap ${
-                activeTab === tab
-                  ? 'border-indigo-500 text-indigo-600'
-                  : 'border-transparent text-slate-400 hover:text-slate-600'
-              }`}
-            >
-              {tab}
-            </button>
-          ))}
-        </div>
-
-        {/* Content */}
-        <div className="overflow-y-auto flex-1">
-          {activeTab === 'Timeline' && <TimelineView steps={steps} />}
-          {activeTab === 'Cards' && <CardsView steps={steps} />}
-          {activeTab === 'Steps' && <StepsView steps={steps} />}
-          {activeTab === 'At a Glance' && <GlanceView steps={steps} />}
-        </div>
-      </motion.div>
+      {/* Content */}
+      <div className="overflow-y-auto flex-1">
+        {activeTab === 'Timeline' && <TimelineView steps={steps} />}
+        {activeTab === 'Cards' && <CardsView steps={steps} />}
+        {activeTab === 'Steps' && <StepsView steps={steps} />}
+        {activeTab === 'At a Glance' && <GlanceView steps={steps} />}
+      </div>
     </div>
   );
-
-  return ReactDOM.createPortal(panel, document.body);
 };

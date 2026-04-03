@@ -4,8 +4,7 @@ import { Workflow, Message } from '../types';
 import { WorkflowSentence } from './WorkflowSentence';
 import { processWorkflowEdit } from '../lib/gemini';
 import { motion, AnimatePresence } from 'motion/react';
-import { Sparkles, Pencil, Send, Check, X, Loader2, Bot, User, Trash2, MoreHorizontal, Copy, Eye } from 'lucide-react';
-import { WorkflowPreview } from './WorkflowPreview';
+import { Sparkles, Pencil, Send, Check, X, Loader2, Bot, User, Trash2, MoreHorizontal, Copy } from 'lucide-react';
 
 interface WorkflowCardProps {
   liveWorkflow: Workflow;
@@ -13,6 +12,7 @@ interface WorkflowCardProps {
   onApply: (workflow: Workflow) => Promise<boolean>;
   onDelete?: () => void;
   onDuplicate?: () => void;
+  onPreview?: (workflow: Workflow) => void;
   groupName: string;
   initiallyEditing?: boolean;
   isDraft?: boolean;
@@ -27,6 +27,7 @@ export const WorkflowCard: React.FC<WorkflowCardProps> = ({
   onApply,
   onDelete,
   onDuplicate,
+  onPreview,
   groupName,
   initiallyEditing = false,
   isDraft = false,
@@ -42,7 +43,6 @@ export const WorkflowCard: React.FC<WorkflowCardProps> = ({
   const [isPublishing, setIsPublishing] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuRect, setMenuRect] = useState<DOMRect | null>(null);
-  const [showPreview, setShowPreview] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -51,6 +51,13 @@ export const WorkflowCard: React.FC<WorkflowCardProps> = ({
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isLoading]);
+
+  // Auto-open preview showing draft when editing or in draft mode
+  useEffect(() => {
+    if (isEditing || isDraft) {
+      onPreview?.(draft);
+    }
+  }, [draft, isEditing, isDraft]);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -87,6 +94,7 @@ export const WorkflowCard: React.FC<WorkflowCardProps> = ({
     setIsEditing(false);
     setMessages([]);
     setInput('');
+    onPreview?.(liveWorkflow);
   };
 
   const handleApply = async () => {
@@ -146,7 +154,7 @@ export const WorkflowCard: React.FC<WorkflowCardProps> = ({
   return (
     <div className={`glass-panel rounded-2xl overflow-hidden max-w-3xl w-full transition-all duration-300 ${hasConflict ? 'ring-2 ring-amber-400' : ''}`}>
       {/* ── Live Section ─────────────────────────────────────── */}
-      {!isDraft && <div className="p-8">
+      {!isDraft && <div className="p-8 cursor-pointer hover:bg-slate-50/60 transition-colors" onClick={() => onPreview?.(liveWorkflow)}>
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-2">
             <h2 className="text-xs font-semibold uppercase tracking-widest text-slate-400">
@@ -162,6 +170,7 @@ export const WorkflowCard: React.FC<WorkflowCardProps> = ({
             <div ref={menuRef} className="relative">
               <button
                 onClick={(e) => {
+                  e.stopPropagation();
                   const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
                   setMenuRect(rect);
                   setMenuOpen((o) => !o);
@@ -184,12 +193,6 @@ export const WorkflowCard: React.FC<WorkflowCardProps> = ({
                       className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm text-slate-700 hover:bg-slate-50 text-left rounded-t-xl"
                     >
                       <Pencil size={13} className="shrink-0" /> Edit Workflow
-                    </button>
-                    <button
-                      onClick={() => { setShowPreview(true); setMenuOpen(false); }}
-                      className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm text-slate-700 hover:bg-slate-50 text-left border-t border-slate-100"
-                    >
-                      <Eye size={13} className="shrink-0" /> Preview Workflow
                     </button>
                     <button
                       onClick={() => { onDuplicate?.(); setMenuOpen(false); }}
@@ -261,12 +264,6 @@ export const WorkflowCard: React.FC<WorkflowCardProps> = ({
                     className="flex items-center gap-1.5 px-3 py-1.5 text-slate-500 border border-slate-200 bg-white rounded-lg text-xs font-semibold hover:bg-slate-50 transition-colors"
                   >
                     <X size={12} /> {isDraft ? 'Cancel' : 'Discard'}
-                  </button>
-                  <button
-                    onClick={() => setShowPreview(true)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-slate-500 border border-slate-200 bg-white rounded-lg text-xs font-semibold hover:bg-slate-50 transition-colors"
-                  >
-                    <Eye size={12} /> Preview
                   </button>
                   <button
                     onClick={handleApply}
@@ -374,13 +371,6 @@ export const WorkflowCard: React.FC<WorkflowCardProps> = ({
         )}
       </AnimatePresence>
 
-      {showPreview && (
-        <WorkflowPreview
-          workflow={isEditing || isDraft ? draft : liveWorkflow}
-          groupName={groupName}
-          onClose={() => setShowPreview(false)}
-        />
-      )}
     </div>
   );
 };

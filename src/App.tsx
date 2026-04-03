@@ -2,6 +2,7 @@ import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { WorkflowGroup, Workflow, WorkflowNode } from './types';
 import { WorkflowCard } from './components/WorkflowCard';
+import { WorkflowPreview } from './components/WorkflowPreview';
 import { NewWorkflowInput } from './components/NewWorkflowInput';
 import { motion, AnimatePresence } from 'motion/react';
 import { Home, User, Users, IdCard, PieChart, FileText, CircleDollarSign, Banknote, Zap, Menu, Plus, Loader2, AlertTriangle, CheckCircle2, X } from 'lucide-react';
@@ -152,6 +153,7 @@ export default function App() {
   const [duplicateDraftIds, setDuplicateDraftIds] = useState<Set<string>>(new Set());
   const [publishingState, setPublishingState] = useState<PublishingState | null>(null);
   const publishResolveRef = useRef<((published: boolean) => void) | null>(null);
+  const [previewWorkflow, setPreviewWorkflow] = useState<Workflow | null>(null);
 
   const selectedGroup = groups.find((g) => g.id === selectedGroupId)!;
 
@@ -243,7 +245,6 @@ export default function App() {
   const handleDeleteVariant = useCallback(
     (variantId: string) => {
       updateVariants((v) => v.filter((w) => w.id !== variantId));
-      setScopeSuggestions((s) => s.filter((x) => x.variantId !== variantId));
       setDuplicateDraftIds((prev) => { const next = new Set(prev); next.delete(variantId); return next; });
     },
     [updateVariants]
@@ -378,7 +379,7 @@ export default function App() {
               {groups.map((g) => (
                 <button
                   key={g.id}
-                  onClick={() => { setSelectedGroupId(g.id); setScopeSuggestions([]); setDismissedUncovered(false); setDismissedTimeOffUncovered(false); }}
+                  onClick={() => { setSelectedGroupId(g.id); setDismissedUncovered(false); setDismissedTimeOffUncovered(false); setPreviewWorkflow(null); }}
                   className={`w-full text-left px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
                     g.id === selectedGroupId ? 'bg-indigo-50 text-indigo-700' : 'text-slate-500 hover:bg-slate-50'
                   }`}
@@ -390,7 +391,7 @@ export default function App() {
           </div>
 
           {/* Canvas */}
-          <div className="flex-1 overflow-y-auto bg-slate-50/50 p-8">
+          <div className="flex-1 overflow-y-auto bg-slate-50/50 p-8 min-w-0">
             <motion.div
               key={selectedGroupId}
               initial={{ opacity: 0, y: 20 }}
@@ -484,6 +485,7 @@ export default function App() {
                       onApply={handleApply}
                       onDelete={selectedGroup.variants.length > 1 ? () => handleDeleteVariant(variant.id) : undefined}
                       onDuplicate={() => handleDuplicateVariant(variant.id)}
+                      onPreview={setPreviewWorkflow}
                       groupName={selectedGroup.name}
                       initiallyEditing={variant.id === newestVariantId}
                       isDraft={variant.id === newestVariantId}
@@ -523,6 +525,26 @@ export default function App() {
               )}
             </motion.div>
           </div>
+
+          {/* Preview Sidebar */}
+          <AnimatePresence>
+            {previewWorkflow && (
+              <motion.div
+                key="preview-sidebar"
+                initial={{ width: 0, opacity: 0 }}
+                animate={{ width: 360, opacity: 1 }}
+                exit={{ width: 0, opacity: 0 }}
+                transition={{ type: 'spring', damping: 30, stiffness: 250 }}
+                className="border-l border-slate-200 bg-white overflow-hidden shrink-0"
+              >
+                <WorkflowPreview
+                  workflow={previewWorkflow}
+                  groupName={selectedGroup.name}
+                  onClose={() => setPreviewWorkflow(null)}
+                />
+              </motion.div>
+            )}
+          </AnimatePresence>
         </main>
       </div>
 
