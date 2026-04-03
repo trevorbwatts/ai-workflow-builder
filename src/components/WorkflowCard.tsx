@@ -10,7 +10,7 @@ import { WorkflowPreview } from './WorkflowPreview';
 interface WorkflowCardProps {
   liveWorkflow: Workflow;
   onUpdateLiveNode: (nodeId: string, newValue: any) => void;
-  onApply: (workflow: Workflow) => void;
+  onApply: (workflow: Workflow) => Promise<boolean>;
   onDelete?: () => void;
   onDuplicate?: () => void;
   groupName: string;
@@ -39,6 +39,7 @@ export const WorkflowCard: React.FC<WorkflowCardProps> = ({
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isPublishing, setIsPublishing] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuRect, setMenuRect] = useState<DOMRect | null>(null);
   const [showPreview, setShowPreview] = useState(false);
@@ -88,11 +89,18 @@ export const WorkflowCard: React.FC<WorkflowCardProps> = ({
     setInput('');
   };
 
-  const handleApply = () => {
-    onApply(draft);
-    setIsEditing(false);
-    setMessages([]);
-    setInput('');
+  const handleApply = async () => {
+    setIsPublishing(true);
+    try {
+      const published = await onApply(draft);
+      if (published) {
+        setIsEditing(false);
+        setMessages([]);
+        setInput('');
+      }
+    } finally {
+      setIsPublishing(false);
+    }
   };
 
   const handleUpdateDraftNode = (nodeId: string, newValue: any) => {
@@ -262,10 +270,11 @@ export const WorkflowCard: React.FC<WorkflowCardProps> = ({
                   </button>
                   <button
                     onClick={handleApply}
-                    disabled={publishDisabled}
+                    disabled={publishDisabled || isPublishing}
                     className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-semibold hover:bg-indigo-700 disabled:bg-slate-300 disabled:cursor-not-allowed transition-colors"
                   >
-                    <Check size={12} /> {isDraft ? 'Publish' : 'Apply Changes'}
+                    {isPublishing ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+                    {isDraft ? 'Publish' : 'Apply Changes'}
                   </button>
                 </div>
               </div>

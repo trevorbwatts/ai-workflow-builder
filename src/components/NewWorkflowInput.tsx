@@ -26,7 +26,16 @@ export const NewWorkflowInput: React.FC<Props> = ({ baseWorkflow, onCreated, onC
     setIsLoading(true);
     setError(null);
     try {
-      const { updatedWorkflow } = await processWorkflowEdit(baseWorkflow, msg, []);
+      // Start from a blank slate (just scope) so the AI builds a fresh workflow
+      // instead of appending to the existing variant's template.
+      const seedWorkflow: Workflow = {
+        ...baseWorkflow,
+        template: 'For {scope},',
+        nodes: {
+          scope: baseWorkflow.nodes.scope ?? { id: 'scope', type: 'scope', label: 'Scope', value: { attribute: 'all', value: '' } },
+        },
+      };
+      const { updatedWorkflow } = await processWorkflowEdit(seedWorkflow, msg, []);
       onCreated(updatedWorkflow);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

@@ -1,9 +1,10 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
+import ReactDOM from 'react-dom';
 import { WorkflowGroup, Workflow, WorkflowNode } from './types';
 import { WorkflowCard } from './components/WorkflowCard';
 import { NewWorkflowInput } from './components/NewWorkflowInput';
 import { motion, AnimatePresence } from 'motion/react';
-import { Home, User, Users, IdCard, PieChart, FileText, CircleDollarSign, Banknote, Zap, Menu, Plus } from 'lucide-react';
+import { Home, User, Users, IdCard, PieChart, FileText, CircleDollarSign, Banknote, Zap, Menu, Plus, Loader2, AlertTriangle, CheckCircle2, X } from 'lucide-react';
 import { suggestScopeAdjustments } from './lib/gemini';
 import { ScopeValue, TimeOffTypeValue } from './types';
 import { displayScopeValue } from './lib/nodes';
@@ -135,15 +136,22 @@ interface ScopeSuggestion {
   suggestedValue: string;
 }
 
+interface PublishingState {
+  workflow: Workflow;
+  phase: 'loading' | 'conflicts';
+  suggestions: ScopeSuggestion[];
+}
+
 export default function App() {
   const [groups, setGroups] = useState<WorkflowGroup[]>(WORKFLOW_GROUPS);
   const [selectedGroupId, setSelectedGroupId] = useState(WORKFLOW_GROUPS[0].id);
-  const [scopeSuggestions, setScopeSuggestions] = useState<ScopeSuggestion[]>([]);
   const [isCreatingNew, setIsCreatingNew] = useState(false);
   const [newestVariantId, setNewestVariantId] = useState<string | null>(null);
   const [dismissedUncovered, setDismissedUncovered] = useState(false);
   const [dismissedTimeOffUncovered, setDismissedTimeOffUncovered] = useState(false);
   const [duplicateDraftIds, setDuplicateDraftIds] = useState<Set<string>>(new Set());
+  const [publishingState, setPublishingState] = useState<PublishingState | null>(null);
+  const publishResolveRef = useRef<((published: boolean) => void) | null>(null);
 
   const selectedGroup = groups.find((g) => g.id === selectedGroupId)!;
 
@@ -178,31 +186,51 @@ export default function App() {
     [selectedGroupId]
   );
 
-  const handleApply = useCallback(
-    async (updatedWorkflow: Workflow) => {
-      setNewestVariantId((prev) => (prev === updatedWorkflow.id ? null : prev));
-      setDuplicateDraftIds((prev) => { const next = new Set(prev); next.delete(updatedWorkflow.id); return next; });
-      updateVariants((variants) =>
-        variants.map((v) => (v.id === updatedWorkflow.id ? updatedWorkflow : v))
-      );
+  const doCommit = useCallback((workflow: Workflow) => {
+    setNewestVariantId((prev) => (prev === workflow.id ? null : prev));
+    setDuplicateDraftIds((prev) => { const next = new Set(prev); next.delete(workflow.id); return next; });
+    updateVariants((variants) => variants.map((v) => v.id === workflow.id ? workflow : v));
+    publishResolveRef.current?.(true);
+    publishResolveRef.current = null;
+    setPublishingState(null);
+  }, [updateVariants]);
 
-      // Check for scope conflicts asynchronously
-      setGroups((prev) => {
-        const group = prev.find((g) => g.id === selectedGroupId)!;
-        const updated = group.variants.map((v) => v.id === updatedWorkflow.id ? updatedWorkflow : v);
-        if (updated.length > 1) {
-          const scopeData = updated.map((v) => ({
-            id: v.id,
-            scope: v.nodes.scope?.value as ScopeValue ?? { attribute: 'all' as const, value: '' },
-            timeOffType: v.nodes.time_off_type?.value as TimeOffTypeValue | undefined,
-          }));
-          suggestScopeAdjustments(scopeData, group.name).then(setScopeSuggestions).catch(() => {});
+  const handleApply = useCallback((updatedWorkflow: Workflow): Promise<boolean> => {
+    return new Promise((resolve) => {
+      publishResolveRef.current = resolve;
+      setPublishingState({ workflow: updatedWorkflow, phase: 'loading', suggestions: [] });
+    });
+  }, []);
+
+  // Run conflict check when publish modal opens
+  useEffect(() => {
+    if (!publishingState || publishingState.phase !== 'loading') return;
+    const { workflow } = publishingState;
+    const group = groups.find((g) => g.id === selectedGroupId)!;
+    const updatedVariants = group.variants.map((v) => v.id === workflow.id ? workflow : v);
+
+    if (updatedVariants.length <= 1) {
+      doCommit(workflow);
+      return;
+    }
+
+    const scopeData = updatedVariants.map((v) => ({
+      id: v.id,
+      scope: (v.nodes.scope?.value as ScopeValue) ?? { attribute: 'all' as const, value: '' },
+      timeOffType: v.nodes.time_off_type?.value as TimeOffTypeValue | undefined,
+    }));
+
+    suggestScopeAdjustments(scopeData, group.name)
+      .then((suggestions) => {
+        if (suggestions.length > 0) {
+          setPublishingState((prev) => prev ? { ...prev, phase: 'conflicts', suggestions } : null);
+        } else {
+          doCommit(workflow);
         }
-        return prev;
-      });
-    },
-    [updateVariants, selectedGroupId]
-  );
+      })
+      .catch(() => doCommit(workflow));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [publishingState?.workflow?.id, publishingState?.phase]);
 
   const handleNewWorkflowCreated = useCallback((workflow: Workflow) => {
     const id = `${selectedGroupId}-${Date.now()}`;
@@ -283,10 +311,27 @@ export default function App() {
           };
         })
       );
-      setScopeSuggestions((s) => s.filter((x) => x.variantId !== suggestion.variantId));
     },
     [updateVariants]
   );
+
+  const handlePublishModalCancel = useCallback(() => {
+    publishResolveRef.current?.(false);
+    publishResolveRef.current = null;
+    setPublishingState(null);
+  }, []);
+
+  const handleFixAndPublish = useCallback(() => {
+    if (!publishingState) return;
+    // Apply all suggestions then commit
+    publishingState.suggestions.forEach(handleAcceptSuggestion);
+    doCommit(publishingState.workflow);
+  }, [publishingState, handleAcceptSuggestion, doCommit]);
+
+  const handlePublishAnyway = useCallback(() => {
+    if (!publishingState) return;
+    doCommit(publishingState.workflow);
+  }, [publishingState, doCommit]);
 
   return (
     <div className="min-h-screen flex bg-[#F9FAFB]">
@@ -416,43 +461,6 @@ export default function App() {
                 )}
               </AnimatePresence>
 
-              {/* Scope conflict suggestions */}
-              <AnimatePresence>
-                {scopeSuggestions.map((s) => {
-                  const variant = selectedGroup.variants.find((v) => v.id === s.variantId);
-                  if (!variant) return null;
-                  return (
-                    <motion.div
-                      key={s.variantId}
-                      initial={{ opacity: 0, y: -8 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -8 }}
-                      className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex items-center justify-between gap-4 text-sm"
-                    >
-                      <span className="text-amber-800">
-                        <span className="font-semibold">Scope conflict:</span> Suggest changing{' '}
-                        <span className="font-medium">"{displayScopeValue(variant.nodes.scope?.value as ScopeValue)}"</span>{' '}
-                        to <span className="font-medium">"{s.suggestedDisplay}"</span>
-                      </span>
-                      <div className="flex gap-2 shrink-0">
-                        <button
-                          onClick={() => handleAcceptSuggestion(s)}
-                          className="px-3 py-1 bg-amber-600 text-white rounded-lg text-xs font-semibold hover:bg-amber-700 transition-colors"
-                        >
-                          Accept
-                        </button>
-                        <button
-                          onClick={() => setScopeSuggestions((prev) => prev.filter((x) => x.variantId !== s.variantId))}
-                          className="px-3 py-1 text-amber-700 border border-amber-300 rounded-lg text-xs font-semibold hover:bg-amber-100 transition-colors"
-                        >
-                          Dismiss
-                        </button>
-                      </div>
-                    </motion.div>
-                  );
-                })}
-              </AnimatePresence>
-
               <AnimatePresence>
                 {[...selectedGroup.variants].sort((a, b) => {
                   const aIsOther =
@@ -480,7 +488,7 @@ export default function App() {
                       initiallyEditing={variant.id === newestVariantId}
                       isDraft={variant.id === newestVariantId}
                       isDuplicateDraft={duplicateDraftIds.has(variant.id)}
-                      hasConflict={scopeSuggestions.some((s) => s.variantId === variant.id)}
+                      hasConflict={false}
                       hasMultipleVariants={selectedGroup.variants.length > 1}
                     />
                   </motion.div>
@@ -517,6 +525,76 @@ export default function App() {
           </div>
         </main>
       </div>
+
+      {/* Publishing Modal */}
+      {publishingState && ReactDOM.createPortal(
+        <div className="fixed inset-0 bg-black/40 z-[9500] flex items-center justify-center p-4">
+          <motion.div
+            initial={{ opacity: 0, y: 12, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            transition={{ duration: 0.15 }}
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden"
+          >
+            {publishingState.phase === 'loading' && (
+              <div className="flex flex-col items-center justify-center px-8 py-10 text-center">
+                <div className="w-12 h-12 rounded-full bg-indigo-50 flex items-center justify-center mb-4">
+                  <Loader2 size={22} className="text-indigo-500 animate-spin" />
+                </div>
+                <p className="text-sm font-semibold text-slate-800">Setting up your workflow</p>
+                <p className="text-xs text-slate-400 mt-1">Checking for conflicts...</p>
+              </div>
+            )}
+
+            {publishingState.phase === 'conflicts' && (
+              <>
+                <div className="flex items-start justify-between px-5 pt-5 pb-4">
+                  <div className="flex items-start gap-3">
+                    <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center shrink-0 mt-0.5">
+                      <AlertTriangle size={15} className="text-amber-600" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold text-slate-900">Scope conflict detected</p>
+                      <p className="text-xs text-slate-500 mt-0.5">Publishing this will create overlapping rules.</p>
+                    </div>
+                  </div>
+                  <button onClick={handlePublishModalCancel} className="p-1 hover:bg-slate-100 rounded-full text-slate-400 transition-colors shrink-0">
+                    <X size={14} />
+                  </button>
+                </div>
+
+                <div className="px-5 pb-4 space-y-2">
+                  {publishingState.suggestions.map((s) => {
+                    const group = groups.find((g) => g.id === selectedGroupId)!;
+                    const variant = group.variants.find((v) => v.id === s.variantId) ?? publishingState.workflow;
+                    return (
+                      <div key={s.variantId} className="px-3 py-3 bg-amber-50 border border-amber-100 rounded-xl text-xs text-amber-800">
+                        Change <span className="font-semibold">"{displayScopeValue(variant.nodes.scope?.value as ScopeValue)}"</span>{' '}
+                        to <span className="font-semibold">"{s.suggestedDisplay}"</span> to avoid overlap.
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="px-5 pb-5 flex gap-2">
+                  <button
+                    onClick={handleFixAndPublish}
+                    className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 bg-indigo-600 text-white rounded-xl text-xs font-semibold hover:bg-indigo-700 transition-colors"
+                  >
+                    <CheckCircle2 size={13} /> Fix &amp; Publish
+                  </button>
+                  <button
+                    onClick={handlePublishAnyway}
+                    className="flex-1 px-3 py-2.5 border border-slate-200 text-slate-600 rounded-xl text-xs font-semibold hover:bg-slate-50 transition-colors"
+                  >
+                    Publish Anyway
+                  </button>
+                </div>
+              </>
+            )}
+          </motion.div>
+        </div>,
+        document.body
+      )}
     </div>
   );
 }
