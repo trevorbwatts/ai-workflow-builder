@@ -335,7 +335,7 @@ export default function App() {
   }, [publishingState, doCommit]);
 
   return (
-    <div className="min-h-screen flex bg-[#F9FAFB]">
+    <div className="h-screen flex bg-[#F9FAFB] overflow-hidden">
       {/* Global Nav */}
       <nav className="w-14 bg-white border-r border-slate-200 flex flex-col items-center py-4 sticky top-0 h-screen z-20 shrink-0">
         <div className="flex-1 flex flex-col items-center gap-1 mt-2">
@@ -532,7 +532,7 @@ export default function App() {
               <motion.div
                 key="preview-sidebar"
                 initial={{ width: 0, opacity: 0 }}
-                animate={{ width: 600, opacity: 1 }}
+                animate={{ width: 500, opacity: 1 }}
                 exit={{ width: 0, opacity: 0 }}
                 transition={{ type: 'spring', damping: 30, stiffness: 250 }}
                 className="border-l border-slate-200 bg-white overflow-hidden shrink-0"

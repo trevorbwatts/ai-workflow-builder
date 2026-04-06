@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { Workflow, TimeoutValue, ScopeValue, TimeOffTypeValue, StatusConditionValue, ApproversValue } from '../types';
-import { displayNodeValue, displayScopeValue, displayTimeOffTypeValue, displayStatusConditionValue, formatOperand } from '../lib/nodes';
+import { displayNodeValueLabel, displayScopeValue, displayTimeOffTypeValue, displayStatusConditionValue, formatOperandLabel } from '../lib/nodes';
 import { motion } from 'motion/react';
 import { User, Bell, Star, X, ThumbsUp, ThumbsDown, Clock, UserX } from 'lucide-react';
 
@@ -17,6 +17,7 @@ interface TimelineStep {
   conditionTriggers?: string;
   conditionBackupActor?: string;
   backup?: string;
+  forkChild?: boolean;  // step sits directly below a fork's escalation branch
 }
 
 function fmt(v: TimeoutValue): string {
@@ -37,39 +38,53 @@ function parseWorkflowSteps(workflow: Workflow): TimelineStep[] {
 
     if (node.type === 'approvers' && id === 'requester') {
       hasRequester = true;
-      steps.push({ kind: 'start', actor: displayNodeValue(node.type, node.value), description: 'initiates the request' });
+      steps.push({ kind: 'start', actor: displayNodeValueLabel(node.type, node.value), description: 'initiates the request' });
       i++; continue;
     }
 
     if (node.type === 'approvers') {
       const nextNode = workflow.nodes[ids[i + 1]];
       const backup = (node.value as ApproversValue).backup
-        ? formatOperand((node.value as ApproversValue).backup!)
+        ? formatOperandLabel((node.value as ApproversValue).backup!)
         : undefined;
 
       if (nextNode?.type === 'status_condition') {
         const bn = workflow.nodes[ids[i + 2]];
         steps.push({
           kind: 'condition_fork',
-          actor: displayNodeValue(node.type, node.value),
+          actor: displayNodeValueLabel(node.type, node.value),
           conditionTriggers: displayStatusConditionValue(nextNode.value as StatusConditionValue),
-          conditionBackupActor: bn ? displayNodeValue(bn.type, bn.value) : undefined,
+          conditionBackupActor: bn ? displayNodeValueLabel(bn.type, bn.value) : undefined,
           backup,
         });
+        // Add the backup approver as a separate notify step below the fork
+        if (bn) {
+          const bnBackup = (bn.value as ApproversValue)?.backup
+            ? formatOperandLabel((bn.value as ApproversValue).backup!)
+            : undefined;
+          steps.push({ kind: 'notify', actor: displayNodeValueLabel(bn.type, bn.value), backup: bnBackup, forkChild: true });
+        }
         i += 3; continue;
       }
       if (nextNode?.type === 'timeout') {
         const en = workflow.nodes[ids[i + 2]];
         steps.push({
           kind: 'fork',
-          actor: displayNodeValue(node.type, node.value),
+          actor: displayNodeValueLabel(node.type, node.value),
           forkTimeout: fmt(nextNode.value as TimeoutValue),
-          forkEscalationActor: en ? displayNodeValue(en.type, en.value) : undefined,
+          forkEscalationActor: en ? displayNodeValueLabel(en.type, en.value) : undefined,
           backup,
         });
+        // Add the escalation approver as a separate notify step below the fork
+        if (en) {
+          const enBackup = (en.value as ApproversValue)?.backup
+            ? formatOperandLabel((en.value as ApproversValue).backup!)
+            : undefined;
+          steps.push({ kind: 'notify', actor: displayNodeValueLabel(en.type, en.value), backup: enBackup, forkChild: true });
+        }
         i += 3; continue;
       }
-      steps.push({ kind: 'notify', actor: displayNodeValue(node.type, node.value), backup });
+      steps.push({ kind: 'notify', actor: displayNodeValueLabel(node.type, node.value), backup });
       i++; continue;
     }
     i++;
@@ -77,7 +92,7 @@ function parseWorkflowSteps(workflow: Workflow): TimelineStep[] {
 
   if (!hasRequester) steps.unshift({ kind: 'start', description: 'Employee submits request' });
   const last = steps[steps.length - 1];
-  if (last && last.kind !== 'fork') steps.push({ kind: 'end', description: 'Request Approved.' });
+  if (last && last.kind !== 'fork' && last.kind !== 'condition_fork') steps.push({ kind: 'end', description: 'Request Approved.' });
   return steps;
 }
 
@@ -85,25 +100,27 @@ function parseWorkflowSteps(workflow: Workflow): TimelineStep[] {
 
 const W = 560;       // inner canvas width
 const CX = W / 2;   // 280 — center x
-const LX = 108;     // left branch x
-const RX = W - LX;  // 452 — right branch x
+const LX = 140;     // left branch x
+const RX = W - LX;  // right branch x
 const NR = 20;      // node radius
 const ND = NR * 2;  // 40 — node diameter
 
 const G = {
-  LABEL_H: 52,    // main label box height
+  LABEL_H: 60,    // fallback label height (overridden by DOM measurement)
   B_LABEL_H: 60,  // branch label box height
-  CONN: 30,       // connector between non-fork steps
-  PRE: 14,        // gap from main label to horizontal split
-  DROP: 70,       // from split y to branch node center
-  RET_DOWN: 44,   // from branch node bottom down to return turn
-  RET_CONT: 26,   // from return turn down to next node top
-  TOP: 28,
-  BOT: 44,
+  CONN: 20,       // connector gap from label bottom to next node
+  PRE: 24,        // gap from label bottom to horizontal split
+  DROP: 58,       // from split y to branch node center
+  RET_DOWN: 36,   // from branch node bottom down to return turn
+  RET_CONT: 18,   // from return turn down to next node top
+  TOP: 20,
+  BOT: 32,
 };
 
-const MAIN_LW = 208;  // main label width
-const BR_LW = 152;    // branch label width
+const MAIN_LW = 312;  // main label max-width
+const BR_LW = 228;    // branch label max-width (2-branch)
+const BR_FORK_LW = 140; // branch label max-width (3-branch fork)
+const FC_RX = W - 40;   // right branch x for fork-child steps
 
 interface SL {
   step: TimelineStep;
@@ -116,15 +133,16 @@ interface SL {
   endY: number;
 }
 
-function calcLayout(steps: TimelineStep[]): { items: SL[]; totalH: number } {
+function calcLayout(steps: TimelineStep[], labelHeights: number[]): { items: SL[]; totalH: number } {
   let y = G.TOP;
-  const items = steps.map((step): SL => {
+  const items = steps.map((step, i): SL => {
     const nodeY = y + NR;
     const labelY = nodeY + NR + 7;
     const isA = step.kind !== 'start' && step.kind !== 'end';
+    const lh = labelHeights[i] ?? G.LABEL_H;
 
     if (isA) {
-      const splitY = labelY + G.LABEL_H + G.PRE;
+      const splitY = labelY + lh + G.PRE;
       const branchY = splitY + G.DROP;
       const branchLabelY = branchY + NR + 7;
       const retY = branchLabelY + G.B_LABEL_H + G.RET_DOWN;
@@ -132,7 +150,7 @@ function calcLayout(steps: TimelineStep[]): { items: SL[]; totalH: number } {
       y = endY;
       return { step, nodeY, labelY, splitY, branchY, branchLabelY, retY, endY };
     } else {
-      const endY = labelY + G.LABEL_H + G.CONN;
+      const endY = labelY + lh + G.CONN;
       y = endY;
       return { step, nodeY, labelY, endY };
     }
@@ -142,10 +160,20 @@ function calcLayout(steps: TimelineStep[]): { items: SL[]; totalH: number } {
 
 // ─── Flowchart Component ──────────────────────────────────────────────────────
 
-const DU = 0.12; // base delay unit
+const DU = 0.18; // base delay unit
 
 const Flowchart: React.FC<{ steps: TimelineStep[] }> = ({ steps }) => {
-  const { items, totalH } = calcLayout(steps);
+  const labelElsRef = useRef<(HTMLDivElement | null)[]>([]);
+  const [labelHeights, setLabelHeights] = useState<number[]>(() =>
+    steps.map(() => G.LABEL_H)
+  );
+
+  useLayoutEffect(() => {
+    const measured = steps.map((_, i) => labelElsRef.current[i]?.offsetHeight ?? G.LABEL_H);
+    setLabelHeights(measured);
+  }, [steps]);
+
+  const { items, totalH } = calcLayout(steps, labelHeights);
 
   const pathEls: React.ReactElement[] = [];
   const nodeEls: React.ReactElement[] = [];
@@ -194,22 +222,42 @@ const Flowchart: React.FC<{ steps: TimelineStep[] }> = ({ steps }) => {
   };
 
   const addLabel = (
-    cx: number, topY: number, w: number,
+    cx: number, topY: number, maxW: number,
     main: string, sub?: string,
-    extraCls = ''
+    chips?: string[],
+    refCallback?: (el: HTMLDivElement | null) => void,
+    actor?: string
   ) => {
     nodeEls.push(
-      <motion.div
+      <div
         key={nk++}
-        style={{ position: 'absolute', left: cx - w / 2, top: topY, width: w, textAlign: 'center' }}
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ delay: t + 0.08, duration: 0.22 }}
-        className={`rounded-xl border px-3 py-2 bg-white border-slate-200 shadow-sm ${extraCls}`}
+        style={{ position: 'absolute', left: cx, top: topY, transform: 'translateX(-50%)' }}
       >
-        <p className="text-[12px] font-semibold text-slate-700 leading-snug">{main}</p>
-        {sub && <p className="text-[11px] text-slate-500 mt-0.5 leading-snug">{sub}</p>}
-      </motion.div>
+        <motion.div
+          ref={refCallback}
+          style={{ width: 'max-content', maxWidth: maxW, textAlign: 'center' }}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: t + 0.10, duration: 0.30 }}
+          className="rounded-xl border px-3 py-2.5 bg-white border-slate-200 shadow-sm"
+        >
+          <p className="text-[12px] font-semibold text-slate-700 leading-snug">
+            {actor
+              ? <><span className="text-indigo-600">{actor}</span>{' '}{main}</>
+              : main}
+          </p>
+          {chips && chips.length > 0 && (
+            <div className="flex justify-center gap-1 mt-1.5 flex-wrap">
+              {chips.map((chip) => (
+                <span key={chip} className="text-[10px] font-medium bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">
+                  {chip}
+                </span>
+              ))}
+            </div>
+          )}
+          {sub && <p className="text-[11px] text-slate-500 mt-1 leading-snug">{sub}</p>}
+        </motion.div>
+      </div>
     );
   };
 
@@ -217,6 +265,10 @@ const Flowchart: React.FC<{ steps: TimelineStep[] }> = ({ steps }) => {
     const { step, nodeY, labelY, splitY, branchY, branchLabelY, retY } = item;
     const isA = step.kind !== 'start' && step.kind !== 'end';
     const next = items[i + 1];
+    const isForkChild = !!step.forkChild;
+
+    // Step center X: fork-child steps sit at RX (below the No Response column)
+    const sX = isForkChild ? RX : CX;
 
     // ── Main node ──
     const isEnd = step.kind === 'end';
@@ -227,62 +279,125 @@ const Flowchart: React.FC<{ steps: TimelineStep[] }> = ({ steps }) => {
     const mIcn = isEnd ? 'text-amber-500' : 'text-slate-500';
     const mIconProps = isEnd ? { fill: 'currentColor', stroke: 'currentColor' } : {};
 
-    addNode(CX, nodeY, mBg, mBrd, MIcon, mIcn, mIconProps);
+    addNode(sX, nodeY, mBg, mBrd, MIcon, mIcn, mIconProps);
 
-    const mainText = isStart ? (step.actor ?? 'Employee')
-      : isEnd ? (step.description ?? 'Request Approved.')
-      : (step.actor ?? '');
-    const subText = isStart ? (step.description ?? 'Submits request')
-      : isEnd ? 'Email sent to employee.'
-      : 'Receives request in Inbox and Email';
+    const actor = (!isEnd) ? (step.actor ?? 'Employee') : undefined;
+    const mainText = isStart ? 'Submits Request'
+      : isEnd ? 'Request Approved'
+      : 'Receives Request';
+    const subText = isEnd ? 'Email sent to employee.' : undefined;
+    const chips = (!isStart && !isEnd) ? ['Inbox', 'Email'] : undefined;
 
-    addLabel(CX, labelY, MAIN_LW, mainText, subText);
+    addLabel(sX, labelY, MAIN_LW, mainText, subText, chips,
+      (el) => { labelElsRef.current[i] = el; }, actor);
     t += DU * 1.3;
 
     if (isA) {
-      // Line: main label bottom → split
-      addPath(`M ${CX},${nodeY + NR} L ${CX},${splitY}`, 0.17);
+      const R = 18; // corner radius for rounded bends
+      const isFork = step.kind === 'fork' || step.kind === 'condition_fork';
 
-      // Horizontal split line
-      addPath(`M ${LX},${splitY} L ${RX},${splitY}`, 0.22);
+      // Branch X positions: fork-child uses CX (left) / FC_RX (right)
+      const sLX = isForkChild ? CX : LX;
+      const sRX = isForkChild ? FC_RX : RX;
 
-      // Left + right drops (staggered slightly)
-      const tDrops = t;
-      addPath(`M ${LX},${splitY} L ${LX},${branchY! - NR}`, 0.22);
-      addPath(`M ${RX},${splitY} L ${RX},${branchY! - NR}`, 0.20, tDrops + 0.05);
+      // Line: main node bottom → split
+      addPath(`M ${sX},${nodeY + NR} L ${sX},${splitY}`, 0.22);
 
-      // Left branch: approval
-      addNode(LX, branchY!, 'bg-emerald-50', 'border-emerald-300', ThumbsUp, 'text-emerald-600');
-      addLabel(LX, branchLabelY!, BR_LW, `${step.actor} Approves it.`);
+      // Left arm: sX → sLX with rounded corner
+      addPath(
+        `M ${sX},${splitY} L ${sLX + R},${splitY} Q ${sLX},${splitY} ${sLX},${splitY + R} L ${sLX},${branchY! - NR}`,
+        0.30
+      );
 
-      // Right branch: rejection or escalation
-      t += DU * 0.7;
-      addNode(RX, branchY!, 'bg-red-50', 'border-red-200', ThumbsDown, 'text-red-400');
+      if (isFork) {
+        // Center drop (Rejected): straight down from sX
+        const tCDrop = t - 0.30 + 0.06;
+        addPath(`M ${sX},${splitY} L ${sX},${branchY! - NR}`, 0.18, tCDrop);
 
-      let rj: string, rjSub: string | undefined;
-      if (step.kind === 'fork') {
-        rj = `${step.actor} Rejects it.`;
-        rjSub = `After ${step.forkTimeout} → ${step.forkEscalationActor}`;
-      } else if (step.kind === 'condition_fork') {
-        rj = `${step.actor} Rejects it.`;
-        rjSub = `If ${step.conditionTriggers} → ${step.conditionBackupActor}`;
+        // Right arm (Escalated): sX → sRX with rounded corner
+        const tRDrop = t - 0.30 + 0.10;
+        addPath(
+          `M ${sX},${splitY} L ${sRX - R},${splitY} Q ${sRX},${splitY} ${sRX},${splitY + R} L ${sRX},${branchY! - NR}`,
+          0.28, tRDrop
+        );
       } else {
-        rj = `${step.actor} Rejects it.`;
-        rjSub = 'Email is sent to Employee.';
+        // Right arm (Rejected for notify): sX → sRX with rounded corner
+        const tRDrop = t - 0.30 + 0.05;
+        addPath(
+          `M ${sX},${splitY} L ${sRX - R},${splitY} Q ${sRX},${splitY} ${sRX},${splitY + R} L ${sRX},${branchY! - NR}`,
+          0.28, tRDrop
+        );
       }
-      addLabel(RX, branchLabelY!, BR_LW, rj, rjSub);
-      t += DU * 1.4;
 
-      // Return: approval node bottom → turn → center
-      addPath(`M ${LX},${branchY! + NR} L ${LX},${retY} L ${CX},${retY}`, 0.30);
+      // Left branch: Approved (all types)
+      addNode(sLX, branchY!, 'bg-emerald-50', 'border-emerald-300', ThumbsUp, 'text-emerald-600');
+      addLabel(sLX, branchLabelY!, isFork ? BR_FORK_LW : BR_LW, 'Approved');
 
-      // Continue center line to next step
-      if (next) {
-        addPath(`M ${CX},${retY} L ${CX},${next.nodeY - NR}`, 0.18);
+      if (isFork) {
+        // ── 3-branch layout ──────────────────────────────────────────
+
+        // Center branch: Rejected (dead end — no return)
+        t += DU * 0.5;
+        addNode(sX, branchY!, 'bg-red-50', 'border-red-200', ThumbsDown, 'text-red-400');
+        addLabel(sX, branchLabelY!, BR_FORK_LW, 'Rejected', 'Email is sent to Employee');
+
+        // Right branch: Escalated (continues flow to next approver)
+        t += DU * 0.5;
+        const EscIcon = step.kind === 'condition_fork' ? UserX : Clock;
+        const escLabel = step.kind === 'condition_fork' ? 'Unavailable' : 'No Response';
+        const escSub = step.kind === 'fork'
+          ? `After ${step.forkTimeout}`
+          : `If ${step.conditionTriggers}`;
+        addNode(sRX, branchY!, 'bg-amber-50', 'border-amber-200', EscIcon, 'text-amber-500');
+        addLabel(sRX, branchLabelY!, BR_FORK_LW, escLabel, escSub);
+        t += DU * 1.4;
+
+        // Approved bypass: travels down the left side all the way to the end star
+        const endItem = items[items.length - 1];
+        const endStarY = endItem.nodeY;
+        const tBypass = t;
+        addPath(
+          `M ${sLX},${branchY! + NR} L ${sLX},${endStarY - NR - R} Q ${sLX},${endStarY - NR} ${sLX + R},${endStarY - NR} L ${CX - R},${endStarY - NR} Q ${CX},${endStarY - NR} ${CX},${endStarY - NR + R}`,
+          0.70, tBypass
+        );
+
+        // Escalated: straight down to next step (forkChild directly below at RX)
+        if (next) {
+          addPath(`M ${sRX},${branchY! + NR} L ${sRX},${next.nodeY - NR}`, 0.30);
+        }
+      } else {
+        // ── 2-branch layout (notify) ─────────────────────────────────
+
+        // Right branch: Rejected
+        t += DU * 0.7;
+        addNode(sRX, branchY!, 'bg-red-50', 'border-red-200', ThumbsDown, 'text-red-400');
+        addLabel(sRX, branchLabelY!, BR_LW, 'Rejected', 'Email is sent to Employee');
+        t += DU * 1.4;
+
+        // Return from Approved (sLX) → to CX → down to next step
+        if (isForkChild) {
+          // Left branch already at CX — go straight down to star
+          if (next) {
+            addPath(`M ${CX},${branchY! + NR} L ${CX},${next.nodeY - NR}`, 0.30);
+          }
+        } else {
+          // Normal: LX → retY → CX → next
+          if (next) {
+            addPath(
+              `M ${sLX},${branchY! + NR} L ${sLX},${retY! - R} Q ${sLX},${retY} ${sLX + R},${retY} L ${CX - R},${retY} Q ${CX},${retY} ${CX},${retY! + R} L ${CX},${next.nodeY - NR}`,
+              0.46
+            );
+          } else {
+            addPath(
+              `M ${sLX},${branchY! + NR} L ${sLX},${retY! - R} Q ${sLX},${retY} ${sLX + R},${retY} L ${CX},${retY}`,
+              0.36
+            );
+          }
+        }
       }
     } else {
       if (next) {
-        addPath(`M ${CX},${nodeY + NR} L ${CX},${next.nodeY - NR}`, 0.22);
+        addPath(`M ${sX},${nodeY + NR} L ${sX},${next.nodeY - NR}`, 0.26);
       }
     }
   });
@@ -297,6 +412,69 @@ const Flowchart: React.FC<{ steps: TimelineStep[] }> = ({ steps }) => {
         {pathEls}
       </svg>
       {nodeEls}
+    </div>
+  );
+};
+
+// ─── Pannable Dot-Grid Canvas ─────────────────────────────────────────────────
+
+interface PannableCanvasProps {
+  workflowId: string;
+  children: React.ReactNode;
+}
+
+const PannableCanvas: React.FC<PannableCanvasProps> = ({ workflowId, children }) => {
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const dragging = useRef(false);
+  const lastPos = useRef({ x: 0, y: 0 });
+
+  // Reset pan when workflow changes
+  const prevId = useRef(workflowId);
+  if (prevId.current !== workflowId) {
+    prevId.current = workflowId;
+    offset.x = 0;
+    offset.y = 0;
+  }
+
+  const onMouseDown = useCallback((e: React.MouseEvent) => {
+    dragging.current = true;
+    setIsDragging(true);
+    lastPos.current = { x: e.clientX, y: e.clientY };
+  }, []);
+
+  const onMouseMove = useCallback((e: React.MouseEvent) => {
+    if (!dragging.current) return;
+    const dx = e.clientX - lastPos.current.x;
+    const dy = e.clientY - lastPos.current.y;
+    lastPos.current = { x: e.clientX, y: e.clientY };
+    setOffset(prev => ({ x: prev.x + dx, y: prev.y + dy }));
+  }, []);
+
+  const stopDrag = useCallback(() => {
+    dragging.current = false;
+    setIsDragging(false);
+  }, []);
+
+  return (
+    <div
+      className="flex-1 overflow-hidden relative select-none"
+      style={{
+        backgroundImage: 'radial-gradient(circle, #cbd5e1 1px, transparent 1px)',
+        backgroundSize: '20px 20px',
+        cursor: isDragging ? 'grabbing' : 'grab',
+      }}
+      onMouseDown={onMouseDown}
+      onMouseMove={onMouseMove}
+      onMouseUp={stopDrag}
+      onMouseLeave={stopDrag}
+    >
+      <div
+        style={{ transform: `translate(${offset.x}px, ${offset.y}px)` }}
+        className="flex justify-center py-6 px-4"
+      >
+        {children}
+      </div>
     </div>
   );
 };
@@ -339,12 +517,10 @@ export const WorkflowPreview: React.FC<WorkflowPreviewProps> = ({ workflow, grou
 
       <div className="border-b border-slate-100 mt-4 mx-5 shrink-0" />
 
-      {/* Flowchart — key on workflow ID so animation replays when switching workflows */}
-      <div className="overflow-y-auto flex-1">
-        <div className="flex justify-center py-6 px-4">
-          <Flowchart key={workflow.id} steps={steps} />
-        </div>
-      </div>
+      {/* Flowchart — pannable dot-grid canvas */}
+      <PannableCanvas workflowId={workflow.id}>
+        <Flowchart key={workflow.id} steps={steps} />
+      </PannableCanvas>
     </div>
   );
 };

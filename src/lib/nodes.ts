@@ -25,6 +25,15 @@ export function formatOperand(op: string): string {
   return op;
 }
 
+// Label variant for use in non-sentence contexts (e.g. flowchart preview nodes)
+export function formatOperandLabel(op: string): string {
+  if (op === 'manager') return 'Manager';
+  if (op === 'managers manager') return "Manager's Manager";
+  if (op.startsWith('role:')) return op.slice(5);
+  if (op.startsWith('person:')) return op.slice(7);
+  return op;
+}
+
 export function displayScopeValue(v: ScopeValue): string {
   if (v.attribute === 'all') return 'all employees';
   if (v.attribute === 'all_other') return 'all other employees';
@@ -98,6 +107,18 @@ export function displayNodeValue(type: NodeType, value: NodeValue): string {
     return displayStatusConditionValue(value as StatusConditionValue);
   }
   return '';
+}
+
+// Label variant for non-sentence contexts (e.g. flowchart preview nodes)
+export function displayNodeValueLabel(type: NodeType, value: NodeValue): string {
+  if (type === 'approvers') {
+    const v = value as ApproversValue;
+    if (!v.operands || v.operands.length === 0) return '—';
+    const formatted = v.operands.map(formatOperandLabel);
+    const joiner = v.operator === 'AND' ? ' and ' : ' or ';
+    return formatted.join(joiner);
+  }
+  return displayNodeValue(type, value);
 }
 
 export const NODE_LIBRARY_DESCRIPTION = `
