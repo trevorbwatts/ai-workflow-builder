@@ -5,9 +5,36 @@ import { WorkflowPreview } from './components/WorkflowPreview';
 import { NewWorkflowInput } from './components/NewWorkflowInput';
 import { ConflictModal, CoverageGap } from './components/ConflictModal';
 import { motion, AnimatePresence } from 'motion/react';
-import { Home, User, Users, IdCard, PieChart, FileText, CircleDollarSign, Banknote, Zap, Menu, Plus, Loader2, CheckCircle2, AlertTriangle } from 'lucide-react';
+import ReactDOM from 'react-dom';
+import { Home, User, Users, IdCard, PieChart, FileText, CircleDollarSign, Banknote, Zap, Menu, Plus, Loader2, CheckCircle2, AlertTriangle, ShieldAlert } from 'lucide-react';
 import { suggestScopeAdjustments } from './lib/gemini';
 import { ScopeValue, TimeOffTypeValue } from './types';
+
+function computeCoverageGaps(effectiveVariants: Workflow[]): CoverageGap[] {
+  const gaps: CoverageGap[] = [];
+  if (effectiveVariants.length === 0) return gaps;
+
+  const hasScopeCatchAll = effectiveVariants.some((v) => {
+    const attr = (v.nodes.scope?.value as ScopeValue)?.attribute;
+    return attr === 'all' || attr === 'all_other';
+  });
+  if (!hasScopeCatchAll) {
+    gaps.push({ kind: 'scope', description: "Some employees aren't covered by any workflow variant. Add a catch-all to ensure everyone is included." });
+  }
+
+  const hasTimeOffTypeNode = effectiveVariants.some((v) => v.nodes.time_off_type);
+  if (hasTimeOffTypeNode) {
+    const hasTimeOffCatchAll = effectiveVariants.some((v) => {
+      const attr = (v.nodes.time_off_type?.value as TimeOffTypeValue)?.attribute;
+      return attr === 'all' || attr === 'all_other';
+    });
+    if (!hasTimeOffCatchAll) {
+      gaps.push({ kind: 'time_off_type', description: "Some time-off types aren't covered by any workflow variant. Add a catch-all to ensure all request types are included." });
+    }
+  }
+
+  return gaps;
+}
 
 const NAV_ITEMS = [
   { icon: Home, label: 'Home' },
@@ -158,6 +185,7 @@ export default function App() {
   const conflictDebounce = useRef<ReturnType<typeof setTimeout>>();
   const [showConflictModal, setShowConflictModal] = useState(false);
   const [previewWorkflow, setPreviewWorkflow] = useState<Workflow | null>(null);
+  const [blockedDeleteId, setBlockedDeleteId] = useState<string | null>(null);
 
   const selectedGroup = groups.find((g) => g.id === selectedGroupId)!;
 
@@ -185,31 +213,10 @@ export default function App() {
   );
 
   // Coverage gap check runs against the effective future state
-  const coverageGaps = useMemo((): CoverageGap[] => {
-    const gaps: CoverageGap[] = [];
-    if (effectiveVariants.length === 0) return gaps;
-
-    const hasScopeCatchAll = effectiveVariants.some((v) => {
-      const attr = (v.nodes.scope?.value as ScopeValue)?.attribute;
-      return attr === 'all' || attr === 'all_other';
-    });
-    if (!hasScopeCatchAll) {
-      gaps.push({ kind: 'scope', description: "Some employees aren't covered by any workflow variant. Add a catch-all to ensure everyone is included." });
-    }
-
-    const hasTimeOffTypeNode = effectiveVariants.some((v) => v.nodes.time_off_type);
-    if (hasTimeOffTypeNode) {
-      const hasTimeOffCatchAll = effectiveVariants.some((v) => {
-        const attr = (v.nodes.time_off_type?.value as TimeOffTypeValue)?.attribute;
-        return attr === 'all' || attr === 'all_other';
-      });
-      if (!hasTimeOffCatchAll) {
-        gaps.push({ kind: 'time_off_type', description: "Some time-off types aren't covered by any workflow variant. Add a catch-all to ensure all request types are included." });
-      }
-    }
-
-    return gaps;
-  }, [effectiveVariants]);
+  const coverageGaps = useMemo(
+    () => computeCoverageGaps(effectiveVariants),
+    [effectiveVariants]
+  );
 
   // Auto-run conflict check (debounced) whenever the effective future state changes
   useEffect(() => {
@@ -299,9 +306,21 @@ export default function App() {
 
   const handleDeleteVariant = useCallback(
     (variantId: string) => {
-      updateVariants((v) => v.filter((w) => w.id !== variantId));
+      const variant = selectedGroup.variants.find((v) => v.id === variantId);
+      // Drafts aren't in the effective state, so deleting one can't create a gap
+      if (!variant || variant.status === 'draft') {
+        updateVariants((v) => v.filter((w) => w.id !== variantId));
+        return;
+      }
+      const simulated = getEffectiveVariants(selectedGroup.variants.filter((v) => v.id !== variantId));
+      const gaps = computeCoverageGaps(simulated);
+      if (gaps.length > 0) {
+        setBlockedDeleteId(variantId);
+      } else {
+        updateVariants((v) => v.filter((w) => w.id !== variantId));
+      }
     },
-    [updateVariants]
+    [updateVariants, selectedGroup.variants, getEffectiveVariants]
   );
 
   const handleDuplicateVariant = useCallback((variantId: string) => {
@@ -596,6 +615,52 @@ export default function App() {
           onAcceptAll={handleAcceptAllSuggestions}
           onClose={() => setShowConflictModal(false)}
         />
+      )}
+
+      {blockedDeleteId && ReactDOM.createPortal(
+        <div className="fixed inset-0 bg-black/40 z-[9500] flex items-center justify-center p-6">
+          <motion.div
+            initial={{ opacity: 0, y: 12, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            transition={{ duration: 0.15 }}
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden"
+          >
+            <div className="px-6 py-5 border-b border-slate-100 flex items-center gap-3">
+              <div className="w-9 h-9 rounded-full bg-red-100 flex items-center justify-center shrink-0">
+                <ShieldAlert size={16} className="text-red-600" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-slate-900">Deletion Blocked</h3>
+                <p className="text-xs text-slate-500 mt-0.5">Complete coverage must be maintained at all times.</p>
+              </div>
+            </div>
+
+            <div className="px-6 py-5 space-y-3">
+              <p className="text-sm text-slate-700 leading-relaxed">
+                Deleting this workflow would leave some employees with <span className="font-semibold text-red-600">no active approval process</span>. You must create a replacement workflow that covers them before this one can be removed.
+              </p>
+              <div className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-xs text-slate-500 leading-relaxed">
+                <strong className="text-slate-700">Suggested path:</strong> Add a new workflow variant with a scope that covers the employees currently handled by this one, then return here to delete it.
+              </div>
+            </div>
+
+            <div className="px-6 py-4 border-t border-slate-100 flex items-center justify-end gap-3">
+              <button
+                onClick={() => setBlockedDeleteId(null)}
+                className="px-4 py-2 text-slate-600 border border-slate-200 rounded-lg text-xs font-semibold hover:bg-slate-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => { setBlockedDeleteId(null); setIsCreatingNew(true); }}
+                className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-semibold hover:bg-indigo-700 transition-colors"
+              >
+                <Plus size={12} /> Add New Workflow
+              </button>
+            </div>
+          </motion.div>
+        </div>,
+        document.body
       )}
     </div>
   );
