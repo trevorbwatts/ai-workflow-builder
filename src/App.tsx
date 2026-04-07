@@ -630,8 +630,7 @@ export default function App() {
                 <ShieldAlert size={16} className="text-red-600" />
               </div>
               <div>
-                <h3 className="text-sm font-bold text-slate-900">Deletion Blocked</h3>
-                <p className="text-xs text-slate-500 mt-0.5">Complete coverage must be maintained at all times.</p>
+                <h3 className="text-sm font-bold text-slate-900">Wait a second...</h3>
               </div>
             </div>
 
