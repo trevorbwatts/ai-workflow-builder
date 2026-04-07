@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import ReactDOM from 'react-dom';
 import { WorkflowNode, ApproversValue, TimeoutValue, AdvanceNoticeValue, ScopeValue, ScopeAttribute, TimeOffTypeValue, TimeOffTypeAttribute, StatusConditionValue, StatusTrigger, NotifyValue, NotifyChannel } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Plus, ChevronDown, Check } from 'lucide-react';
+import { X, Plus, ChevronDown, Check, Trash2 } from 'lucide-react';
 import { APPROVAL_ROLES, formatOperand, SCOPE_OPTIONS } from '../lib/nodes';
 import { EMPLOYEES } from '../lib/employees';
 
@@ -108,11 +108,12 @@ interface NodeEditorProps {
   node: WorkflowNode;
   onClose: () => void;
   onSave: (newValue: any) => void;
+  onRemove?: () => void;
   anchorRect: DOMRect;
   hasMultipleVariants?: boolean;
 }
 
-export const NodeEditor: React.FC<NodeEditorProps> = ({ node, onClose, onSave, anchorRect, hasMultipleVariants = false }) => {
+export const NodeEditor: React.FC<NodeEditorProps> = ({ node, onClose, onSave, onRemove, anchorRect, hasMultipleVariants = false }) => {
   const [value, setValue] = useState<any>(structuredClone(node.value));
 
   const handleSave = () => onSave(value);
@@ -147,12 +148,23 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ node, onClose, onSave, a
         <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
           Edit {node.label}
         </span>
-        <button
-          onClick={onClose}
-          className="p-1 hover:bg-slate-100 rounded-full transition-colors"
-        >
-          <X size={14} />
-        </button>
+        <div className="flex items-center gap-1">
+          {onRemove && (
+            <button
+              onClick={onRemove}
+              title="Remove this step"
+              className="p-1 hover:bg-red-50 text-slate-300 hover:text-red-500 rounded-full transition-colors"
+            >
+              <Trash2 size={13} />
+            </button>
+          )}
+          <button
+            onClick={onClose}
+            className="p-1 hover:bg-slate-100 rounded-full transition-colors"
+          >
+            <X size={14} />
+          </button>
+        </div>
       </div>
 
       {/* Scrollable body */}

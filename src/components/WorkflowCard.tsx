@@ -122,6 +122,17 @@ export const WorkflowCard: React.FC<WorkflowCardProps> = ({
     }));
   };
 
+  const handleRemoveDraftNode = (nodeId: string) => {
+    setDraft((prev) => {
+      const newTemplate = prev.template.replace(
+        new RegExp(`,\\s*then\\s*\\{${nodeId}\\}`, 'g'),
+        ''
+      );
+      const { [nodeId]: _removed, ...remainingNodes } = prev.nodes;
+      return { ...prev, template: newTemplate, nodes: remainingNodes };
+    });
+  };
+
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
     const msg = input.trim();
@@ -362,6 +373,7 @@ export const WorkflowCard: React.FC<WorkflowCardProps> = ({
                   <WorkflowSentence
                     workflow={draft}
                     onUpdateNode={handleUpdateDraftNode}
+                    onRemoveNode={handleRemoveDraftNode}
                     hasMultipleVariants={hasMultipleVariants}
                   />
                 </div>

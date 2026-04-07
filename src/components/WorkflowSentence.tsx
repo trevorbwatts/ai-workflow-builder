@@ -9,6 +9,7 @@ type EditingState = { id: string; rect: DOMRect } | null;
 interface WorkflowSentenceProps {
   workflow: Workflow;
   onUpdateNode?: (id: string, newValue: any) => void;
+  onRemoveNode?: (id: string) => void;
   readOnly?: boolean;
   hasMultipleVariants?: boolean;
 }
@@ -16,6 +17,7 @@ interface WorkflowSentenceProps {
 export const WorkflowSentence: React.FC<WorkflowSentenceProps> = ({
   workflow,
   onUpdateNode,
+  onRemoveNode,
   readOnly = false,
   hasMultipleVariants = false,
 }) => {
@@ -54,6 +56,11 @@ export const WorkflowSentence: React.FC<WorkflowSentenceProps> = ({
           );
         }
 
+        // A node is removable if the template has it as a ", then {nodeId}" sequential step
+        const isRemovable = onRemoveNode != null &&
+          /,\s*then\s*\{/.test(workflow.template) &&
+          new RegExp(`,\\s*then\\s*\\{${nodeId}\\}`).test(workflow.template);
+
         return (
           <span key={i} className="inline-block">
             <button
@@ -76,6 +83,10 @@ export const WorkflowSentence: React.FC<WorkflowSentenceProps> = ({
                     onUpdateNode?.(nodeId, newValue);
                     setEditing(null);
                   }}
+                  onRemove={isRemovable ? () => {
+                    setEditing(null);
+                    onRemoveNode(nodeId);
+                  } : undefined}
                 />
               )}
             </AnimatePresence>
