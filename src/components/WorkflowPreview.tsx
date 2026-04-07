@@ -1,4 +1,4 @@
-import React, { useCallback, useLayoutEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Workflow, TimeoutValue, ScopeValue, TimeOffTypeValue, StatusConditionValue, ApproversValue, NotifyValue } from '../types';
 import { displayNodeValueLabel, displayScopeValue, displayTimeOffTypeValue, displayStatusConditionValue, formatOperandLabel } from '../lib/nodes';
 import { motion } from 'motion/react';
@@ -529,6 +529,18 @@ const PannableCanvas: React.FC<PannableCanvasProps> = ({ workflowId, children })
     dragging.current = false;
     setIsDragging(false);
   }, []);
+
+  const onWheel = useCallback((e: WheelEvent) => {
+    e.preventDefault();
+    setOffset(prev => ({ x: prev.x - e.deltaX, y: prev.y - e.deltaY }));
+  }, []);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [onWheel]);
 
   return (
     <div
