@@ -1,4 +1,4 @@
-import { NodeType, NodeValue, ApproversValue, ScopeValue, TimeoutValue, AdvanceNoticeValue, TimeOffTypeValue, StatusConditionValue } from '../types';
+import { NodeType, NodeValue, ApproversValue, ScopeValue, TimeoutValue, AdvanceNoticeValue, TimeOffTypeValue, StatusConditionValue, NotifyValue } from '../types';
 
 export const APPROVAL_ROLES = [
   'CEO', 'CFO', 'COO',
@@ -79,6 +79,20 @@ export function displayStatusConditionValue(v: StatusConditionValue): string {
   return `${parts.slice(0, -1).join(', ')}, or ${parts[parts.length - 1]}`;
 }
 
+export function displayNotifyValue(v: NotifyValue): string {
+  if (!v.operands || v.operands.length === 0) return '—';
+  const who = v.operands.map(formatOperand).join(' and ');
+  const channels = v.channels.map((c) => c === 'email' ? 'Email' : 'Inbox').join(' and ');
+  return `${who} via ${channels}`;
+}
+
+export function displayNotifyValueLabel(v: NotifyValue): string {
+  if (!v.operands || v.operands.length === 0) return '—';
+  const who = v.operands.map(formatOperandLabel).join(' and ');
+  const channels = v.channels.map((c) => c === 'email' ? 'Email' : 'Inbox').join(' and ');
+  return `${who} via ${channels}`;
+}
+
 export function displayNodeValue(type: NodeType, value: NodeValue): string {
   if (type === 'scope') {
     return displayScopeValue(value as ScopeValue);
@@ -106,6 +120,9 @@ export function displayNodeValue(type: NodeType, value: NodeValue): string {
   if (type === 'status_condition') {
     return displayStatusConditionValue(value as StatusConditionValue);
   }
+  if (type === 'notify') {
+    return displayNotifyValue(value as NotifyValue);
+  }
   return '';
 }
 
@@ -117,6 +134,9 @@ export function displayNodeValueLabel(type: NodeType, value: NodeValue): string 
     const formatted = v.operands.map(formatOperandLabel);
     const joiner = v.operator === 'AND' ? ' and ' : ' or ';
     return formatted.join(joiner);
+  }
+  if (type === 'notify') {
+    return displayNotifyValueLabel(value as NotifyValue);
   }
   return displayNodeValue(type, value);
 }
@@ -145,4 +165,12 @@ AVAILABLE NODE TYPES (you may ONLY use these):
    IMPORTANT: Always place the status_condition and its backup approver as a SEPARATE SENTENCE at the END of the template, after the main approval flow. Never embed it inline in the middle of a sentence.
    Correct pattern: "...{main_approvers}. If approver is {status_condition}, forwarded to {backup_approver}."
    Wrong pattern:   "...{main_approvers}, but if approver is {status_condition} it goes to {backup_approver}, then..."
+
+6. "notify" — Sends a notification to someone without requiring action. Attached to an approval step.
+   value shape: { operands: string[], channels: Array<"email" | "inbox"> }
+   Operand values: same as approvers — "manager", "managers manager", "role:HR Manager", "person:Jane Smith", etc.
+   Channels defaults to ["email", "inbox"] (both).
+   Place directly after the approver node it's associated with, using "and notify {notify_id}" in the template.
+   Example: "...approved by {approvers} and notify {notify_approvers}, then {secondary}."
+   The node display renders as: "HR Manager via Email and Inbox"
 `;

@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import ReactDOM from 'react-dom';
-import { WorkflowNode, ApproversValue, TimeoutValue, AdvanceNoticeValue, ScopeValue, ScopeAttribute, TimeOffTypeValue, TimeOffTypeAttribute, StatusConditionValue, StatusTrigger } from '../types';
+import { WorkflowNode, ApproversValue, TimeoutValue, AdvanceNoticeValue, ScopeValue, ScopeAttribute, TimeOffTypeValue, TimeOffTypeAttribute, StatusConditionValue, StatusTrigger, NotifyValue, NotifyChannel } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, Plus, ChevronDown, Check } from 'lucide-react';
 import { APPROVAL_ROLES, formatOperand, SCOPE_OPTIONS } from '../lib/nodes';
@@ -143,6 +143,9 @@ export const NodeEditor: React.FC<NodeEditorProps> = ({ node, onClose, onSave, a
       )}
       {node.type === 'status_condition' && (
         <StatusConditionEditor value={value as StatusConditionValue} onChange={setValue} />
+      )}
+      {node.type === 'notify' && (
+        <NotifyEditor value={value as NotifyValue} onChange={setValue} />
       )}
 
       <button
@@ -362,6 +365,90 @@ const OperandRow: React.FC<OperandRowProps> = ({ op, onChange, onRemove }) => {
           onChange={(name) => onChange(`person:${name}`)}
         />
       )}
+    </div>
+  );
+};
+
+// ─── Notify Editor ───────────────────────────────────────────────────────────
+
+interface NotifyEditorProps {
+  value: NotifyValue;
+  onChange: (v: NotifyValue) => void;
+}
+
+const CHANNEL_OPTIONS: { value: NotifyChannel; label: string }[] = [
+  { value: 'email', label: 'Email' },
+  { value: 'inbox', label: 'Inbox' },
+];
+
+const NotifyEditor: React.FC<NotifyEditorProps> = ({ value, onChange }) => {
+  const updateOperand = (i: number, op: string) => {
+    const ops = [...value.operands];
+    ops[i] = op;
+    onChange({ ...value, operands: ops });
+  };
+
+  const removeOperand = (i: number) => {
+    onChange({ ...value, operands: value.operands.filter((_, idx) => idx !== i) });
+  };
+
+  const addOperand = () => {
+    onChange({ ...value, operands: [...value.operands, 'manager'] });
+  };
+
+  const toggleChannel = (ch: NotifyChannel) => {
+    const current = value.channels;
+    if (current.includes(ch)) {
+      if (current.length === 1) return; // must keep at least one
+      onChange({ ...value, channels: current.filter((c) => c !== ch) });
+    } else {
+      onChange({ ...value, channels: [...current, ch] });
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      {/* Who to notify */}
+      {value.operands.map((op, i) => (
+        <OperandRow
+          key={i}
+          op={op}
+          onChange={(newOp) => updateOperand(i, newOp)}
+          onRemove={() => removeOperand(i)}
+        />
+      ))}
+
+      <button
+        onClick={addOperand}
+        className="w-full py-2 border border-dashed border-slate-200 rounded-xl text-slate-400 hover:text-indigo-500 hover:border-indigo-200 transition-all flex items-center justify-center gap-2 text-xs font-medium"
+      >
+        <Plus size={13} /> Add Person
+      </button>
+
+      {/* Channel toggles */}
+      <div className="pt-1 border-t border-slate-100">
+        <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">Notify Via</p>
+        <div className="flex gap-2">
+          {CHANNEL_OPTIONS.map(({ value: ch, label }) => {
+            const active = value.channels.includes(ch);
+            return (
+              <button
+                key={ch}
+                type="button"
+                onClick={() => toggleChannel(ch)}
+                className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl border text-xs font-semibold transition-all ${
+                  active
+                    ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
+                    : 'bg-white border-slate-200 text-slate-400 hover:border-slate-300'
+                }`}
+              >
+                {label}
+                {active && <Check size={11} className="text-indigo-500 shrink-0" />}
+              </button>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 };

@@ -42,8 +42,15 @@ export interface StatusConditionValue {
   triggers: StatusTrigger[];
 }
 
-export type NodeType = 'approvers' | 'timeout' | 'advance_notice' | 'scope' | 'time_off_type' | 'status_condition';
-export type NodeValue = ApproversValue | TimeoutValue | AdvanceNoticeValue | ScopeValue | TimeOffTypeValue | StatusConditionValue;
+export type NotifyChannel = 'email' | 'inbox';
+
+export interface NotifyValue {
+  operands: string[];  // same pool as approvers: 'manager', 'role:HR Manager', 'person:Jane Smith', etc.
+  channels: NotifyChannel[];  // defaults to ['email', 'inbox']
+}
+
+export type NodeType = 'approvers' | 'timeout' | 'advance_notice' | 'scope' | 'time_off_type' | 'status_condition' | 'notify';
+export type NodeValue = ApproversValue | TimeoutValue | AdvanceNoticeValue | ScopeValue | TimeOffTypeValue | StatusConditionValue | NotifyValue;
 
 export interface WorkflowNode {
   id: string;

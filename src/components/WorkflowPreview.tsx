@@ -1,8 +1,8 @@
 import React, { useCallback, useLayoutEffect, useRef, useState } from 'react';
-import { Workflow, TimeoutValue, ScopeValue, TimeOffTypeValue, StatusConditionValue, ApproversValue } from '../types';
+import { Workflow, TimeoutValue, ScopeValue, TimeOffTypeValue, StatusConditionValue, ApproversValue, NotifyValue } from '../types';
 import { displayNodeValueLabel, displayScopeValue, displayTimeOffTypeValue, displayStatusConditionValue, formatOperandLabel } from '../lib/nodes';
 import { motion } from 'motion/react';
-import { User, Bell, Star, X, ThumbsUp, ThumbsDown, Clock, UserX } from 'lucide-react';
+import { User, Bell, Star, X, ThumbsUp, ThumbsDown, Clock, UserX, Mail } from 'lucide-react';
 
 // ─── Step Types & Parser ──────────────────────────────────────────────────────
 
@@ -18,6 +18,8 @@ interface TimelineStep {
   conditionBackupActor?: string;
   backup?: string;
   forkChild?: boolean;  // step sits directly below a fork's escalation branch
+  notifyActor?: string;    // e.g. "Head of HR"
+  notifyChannels?: string[];  // e.g. ['Inbox', 'Email']
 }
 
 function fmt(v: TimeoutValue): string {
@@ -35,6 +37,8 @@ function parseWorkflowSteps(workflow: Workflow): TimelineStep[] {
     const id = ids[i];
     const node = workflow.nodes[id];
     if (!node || node.type === 'scope' || node.type === 'time_off_type') { i++; continue; }
+    // Skip standalone notify nodes — they're captured via lookahead from the preceding approver
+    if (node.type === 'notify') { i++; continue; }
 
     if (node.type === 'approvers' && id === 'requester') {
       hasRequester = true;
@@ -43,49 +47,61 @@ function parseWorkflowSteps(workflow: Workflow): TimelineStep[] {
     }
 
     if (node.type === 'approvers') {
-      const nextNode = workflow.nodes[ids[i + 1]];
+      // Lookahead: capture any notify node right after this approver
+      let lookAhead = i + 1;
+      let notifyActor: string | undefined;
+      let notifyChannels: string[] | undefined;
+      const peekNode = workflow.nodes[ids[lookAhead]];
+      if (peekNode?.type === 'notify') {
+        const nv = peekNode.value as NotifyValue;
+        notifyActor = nv.operands?.length > 0 ? nv.operands.map(formatOperandLabel).join(' and ') : undefined;
+        notifyChannels = nv.channels?.map((c) => c === 'email' ? 'Email' : 'Inbox');
+        lookAhead++;
+      }
+
+      const nextNode = workflow.nodes[ids[lookAhead]];
       const backup = (node.value as ApproversValue).backup
         ? formatOperandLabel((node.value as ApproversValue).backup!)
         : undefined;
 
       if (nextNode?.type === 'status_condition') {
-        const bn = workflow.nodes[ids[i + 2]];
+        const bn = workflow.nodes[ids[lookAhead + 1]];
         steps.push({
           kind: 'condition_fork',
           actor: displayNodeValueLabel(node.type, node.value),
           conditionTriggers: displayStatusConditionValue(nextNode.value as StatusConditionValue),
           conditionBackupActor: bn ? displayNodeValueLabel(bn.type, bn.value) : undefined,
           backup,
+          notifyActor, notifyChannels,
         });
-        // Add the backup approver as a separate notify step below the fork
         if (bn) {
           const bnBackup = (bn.value as ApproversValue)?.backup
             ? formatOperandLabel((bn.value as ApproversValue).backup!)
             : undefined;
           steps.push({ kind: 'notify', actor: displayNodeValueLabel(bn.type, bn.value), backup: bnBackup, forkChild: true });
         }
-        i += 3; continue;
+        i = lookAhead + 2; continue;
       }
       if (nextNode?.type === 'timeout') {
-        const en = workflow.nodes[ids[i + 2]];
+        const en = workflow.nodes[ids[lookAhead + 1]];
         steps.push({
           kind: 'fork',
           actor: displayNodeValueLabel(node.type, node.value),
           forkTimeout: fmt(nextNode.value as TimeoutValue),
           forkEscalationActor: en ? displayNodeValueLabel(en.type, en.value) : undefined,
           backup,
+          notifyActor, notifyChannels,
         });
-        // Add the escalation approver as a separate notify step below the fork
         if (en) {
           const enBackup = (en.value as ApproversValue)?.backup
             ? formatOperandLabel((en.value as ApproversValue).backup!)
             : undefined;
           steps.push({ kind: 'notify', actor: displayNodeValueLabel(en.type, en.value), backup: enBackup, forkChild: true });
         }
-        i += 3; continue;
+        i = lookAhead + 2; continue;
       }
-      steps.push({ kind: 'notify', actor: displayNodeValueLabel(node.type, node.value), backup });
-      i++; continue;
+      steps.push({ kind: 'notify', actor: displayNodeValueLabel(node.type, node.value), backup, notifyActor, notifyChannels });
+      i = lookAhead; continue;
     }
     i++;
   }
@@ -332,6 +348,27 @@ const Flowchart: React.FC<{ steps: TimelineStep[] }> = ({ steps }) => {
       // Left branch: Approved (all types)
       addNode(sLX, branchY!, 'bg-emerald-50', 'border-emerald-300', ThumbsUp, 'text-emerald-600');
       addLabel(sLX, branchLabelY!, isFork ? BR_FORK_LW : BR_LW, 'Approved');
+
+      // Notify branch: splits LEFT off the Approved downward path, below the Approved label
+      if (step.notifyActor) {
+        const NTX = sLX - 90;
+        const ntSplitY = branchLabelY! + G.B_LABEL_H + 14;
+        const ntNodeY = ntSplitY + G.DROP;
+        const ntLabelY = ntNodeY + NR + 7;
+
+        // Branch arm: from the Approved downward line, go left with rounded corner, then down to notify node
+        addPath(
+          `M ${sLX},${ntSplitY} L ${NTX + R},${ntSplitY} Q ${NTX},${ntSplitY} ${NTX},${ntSplitY + R} L ${NTX},${ntNodeY - NR}`,
+          0.28
+        );
+
+        // Standard-size mail icon node (same as other nodes)
+        addNode(NTX, ntNodeY, 'bg-sky-50', 'border-sky-300', Mail, 'text-sky-500');
+
+        // Standard label box: "Notify [Actor]" with channel chips
+        const ntChips = step.notifyChannels ?? ['Inbox', 'Email'];
+        addLabel(NTX, ntLabelY, BR_LW, `Notified`, undefined, ntChips, undefined, step.notifyActor);
+      }
 
       if (isFork) {
         // ── 3-branch layout ──────────────────────────────────────────
