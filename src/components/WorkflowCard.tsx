@@ -321,7 +321,10 @@ export const WorkflowCard: React.FC<WorkflowCardProps> = ({
             transition={{ type: 'spring', damping: 28, stiffness: 220 }}
             className="overflow-hidden"
           >
-            <div className={`bg-slate-50/60 ${!isDraft ? 'border-t border-slate-200' : ''}`}>
+            <div
+              className={`bg-slate-50/60 ${!isDraft ? 'border-t border-slate-200' : ''} ${isDraft ? 'cursor-pointer' : ''}`}
+              onClick={isDraft ? () => onPreview?.(draft) : undefined}
+            >
               {/* Draft header */}
               <div className="px-8 pt-6 pb-4 flex items-center justify-between flex-wrap gap-3">
                 <div className="flex items-center gap-2.5">
@@ -332,7 +335,7 @@ export const WorkflowCard: React.FC<WorkflowCardProps> = ({
                     Changes preview here before saving
                   </span>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
                   <button
                     onClick={isDraft ? onDelete : handleDiscard}
                     className="flex items-center gap-1.5 px-3 py-1.5 text-slate-500 border border-slate-200 bg-white rounded-lg text-xs font-semibold hover:bg-slate-50 transition-colors"
@@ -416,7 +419,7 @@ export const WorkflowCard: React.FC<WorkflowCardProps> = ({
 
               {/* AI input */}
               <div className="px-8 pb-6">
-                <form onSubmit={handleSend}>
+                <form onSubmit={handleSend} onClick={e => e.stopPropagation()}>
                   <div className="flex gap-2">
                     <div className="relative flex-1">
                       <Sparkles
